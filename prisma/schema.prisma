@@ -1,0 +1,97 @@
+// prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Usuario {
+  id               Int            @id @default(autoincrement())
+  nombreCompleto   String
+  correoElectronico String         @unique
+  contrasena       String
+  telefono         String
+  tipoUsuario      String         @default("propietario") // Propietario o Ciudadano
+  fechaRegistro    DateTime       @default(now())
+  
+  mascotas         Mascota[]
+  notificaciones   Notificacion[]
+}
+
+model Mascota {
+  id               Int               @id @default(autoincrement())
+  nombre           String
+  especie          String
+  raza             String
+  fechaNacimiento  DateTime?
+  color            String?
+  descripcionMedica String?          @db.Text
+  fotoUrl          String?
+  estado           String            @default("activo") // activo o extraviado
+  
+  usuarioId        Int
+  usuario          Usuario           @relation(fields: [usuarioId], references: [id])
+  
+  qrMascota        QR_Mascota?
+  alertasPerdidas  AlertaPerdida[]
+  eventosGeocerca  EventoGeocerca[]
+}
+
+model QR_Mascota {
+  id               Int               @id @default(autoincrement())
+  codigoQR         String            @unique // El UUID único para el QR dinámico
+  urlPublica       String
+  fechaGeneracion  DateTime          @default(now())
+  
+  mascotaId        Int               @unique
+  mascota          Mascota           @relation(fields: [mascotaId], references: [id])
+  
+  historialEscaneos HistorialEscaneoQR[]
+}
+
+model HistorialEscaneoQR {
+  id               Int               @id @default(autoincrement())
+  fechaHora        DateTime          @default(now())
+  latitud          Decimal?          @db.Decimal(9, 6)
+  longitud         Decimal?          @db.Decimal(9, 6)
+  
+  qrId             Int
+  qrMascota        QR_Mascota        @relation(fields: [qrId], references: [id])
+}
+
+model EventoGeocerca {
+  id               Int               @id @default(autoincrement())
+  tipoEvento       String            // Entrada o Salida
+  fechaHora        DateTime          @default(now())
+  latitud          Decimal           @db.Decimal(9, 6)
+  longitud         Decimal           @db.Decimal(9, 6)
+  idDispositivo    String?           // Identificador del smartphone que reporta
+  
+  mascotaId        Int
+  mascota          Mascota           @relation(fields: [mascotaId], references: [id])
+}
+
+model AlertaPerdida {
+  id               Int               @id @default(autoincrement())
+  fechaReporte     DateTime          @default(now())
+  descripcion      String?           @db.Text
+  latitud          Decimal           @db.Decimal(9, 6)
+  longitud         Decimal           @db.Decimal(9, 6)
+  
+  mascotaId        Int
+  mascota          Mascota           @relation(fields: [mascotaId], references: [id])
+}
+
+model Notificacion {
+  id               Int               @id @default(autoincrement())
+  mensaje          String
+  fechaHora        DateTime          @default(now())
+  tipo             String            // Alerta, Informativa, etc.
+  leida            Boolean           @default(false)
+  
+  usuarioId        Int
+  usuario          Usuario           @relation(fields: [usuarioId], references: [id])
+}
