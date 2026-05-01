@@ -1,97 +1,197 @@
-// prisma/schema.prisma
-
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
 }
 
 datasource db {
-  provider = "postgresql"
+  provider   = "postgresql"
+}
+
+// --- ENUMS ---
+enum EstadoMascota {
+  en_casa
+  en_paseo
+  extraviada
+  recuperada
+}
+
+enum TipoContacto {
+  WhatsApp
+  Celular
+  Fijo
+  Telegram
+}
+
+enum RelacionPropietario {
+  Dueno_Principal @map("Dueño Principal")
+  Familiar
+  Cuidador
+}
+
+// --- MODELOS ---
+
+model Persona {
+  id               String               @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  nombre           String               @db.VarChar(100)
+  apellidoPaterno  String               @map("apellido_paterno") @db.VarChar(100)
+  apellidoMaterno  String?              @map("apellido_materno") @db.VarChar(100)
+  ci               String?              @unique @db.VarChar(20)
+  fotoPerfilUrl    String?              @map("foto_perfil_url")
+  fechaNacimiento  DateTime?            @map("fecha_nacimiento") @db.Date
+  creadoEl         DateTime             @default(now()) @map("creado_el") @db.Timestamptz
+  usuarios         Usuario[]
+  mediosContacto   MedioContacto[]
+  mascotasPropiedad PropietarioMascota[]
+
+  @@map("personas")
 }
 
 model Usuario {
-  id               Int            @id @default(autoincrement())
-  nombreCompleto   String
-  correoElectronico String         @unique
-  contrasena       String
-  telefono         String
-  tipoUsuario      String         @default("propietario") // Propietario o Ciudadano
-  fechaRegistro    DateTime       @default(now())
-  
-  mascotas         Mascota[]
-  notificaciones   Notificacion[]
+  id               String      @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  personaId        String      @map("persona_id") @db.Uuid
+  correo           String      @unique @map("correo_electronico") @db.VarChar(255)
+  claveHash        String      @map("clave_hash")
+  tokenFcm         String?     @map("token_fcm")
+  configPrivacidad Json?       @default("{\"mostrar_foto_qr\": true, \"notificar_por_correo\": true}") @map("config_privacidad")
+  ultimoAcceso     DateTime?   @map("ultimo_acceso") @db.Timestamptz
+  estadoCuenta     String      @default("activa") @map("estado_cuenta") @db.VarChar(20)
+  persona          Persona     @relation(fields: [personaId], references: [id], onDelete: Cascade)
+  historialUbic   HistorialUbicacion[]
+
+  @@map("usuarios")
+}
+
+model MedioContacto {
+  id        Int          @id @default(autoincrement()) @map("contacto_id")
+  personaId String       @map("persona_id") @db.Uuid
+  tipo      TipoContacto
+  valor     String       @db.VarChar(50)
+  esPrincipal Boolean    @default(false) @map("es_principal")
+  persona   Persona      @relation(fields: [personaId], references: [id], onDelete: Cascade)
+
+  @@map("medios_contacto")
+}
+
+model Raza {
+  id       Int       @id @default(autoincrement()) @map("raza_id")
+  nombre   String    @db.VarChar(100)
+  especie  String    @db.VarChar(50)
+  mascotas Mascota[]
+
+  @@map("razas")
 }
 
 model Mascota {
-  id               Int               @id @default(autoincrement())
-  nombre           String
-  especie          String
-  raza             String
-  fechaNacimiento  DateTime?
-  color            String?
-  descripcionMedica String?          @db.Text
-  fotoUrl          String?
-  estado           String            @default("activo") // activo o extraviado
-  
-  usuarioId        Int
-  usuario          Usuario           @relation(fields: [usuarioId], references: [id])
-  
-  qrMascota        QR_Mascota?
-  alertasPerdidas  AlertaPerdida[]
-  eventosGeocerca  EventoGeocerca[]
+  id                 String               @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  nombre             String               @db.VarChar(100)
+  razaId             Int?                 @map("raza_id")
+  sexo               String?              @db.Char(1)
+  colorPrimario      String?              @map("color_primario") @db.VarChar(50)
+  rasgosParticulares String?              @map("rasgos_particulares")
+  estado             EstadoMascota        @default(en_casa)
+  creadoEl           DateTime             @default(now()) @map("creado_el") @db.Timestamptz
+  raza               Raza?                @relation(fields: [razaId], references: [id])
+  propietarios       PropietarioMascota[]
+  fichaMedica        FichaMedica?
+  fotos              FotoMascota[]
+  placaQr            PlacaQr?
+  zonasSeguras       ZonaSegura[]
+  reportes           ReporteExtravio[]
+  avistamientos      Avistamiento[]
+
+  @@map("mascotas")
 }
 
-model QR_Mascota {
-  id               Int               @id @default(autoincrement())
-  codigoQR         String            @unique // El UUID único para el QR dinámico
-  urlPublica       String
-  fechaGeneracion  DateTime          @default(now())
-  
-  mascotaId        Int               @unique
-  mascota          Mascota           @relation(fields: [mascotaId], references: [id])
-  
-  historialEscaneos HistorialEscaneoQR[]
+model PropietarioMascota {
+  personaId     String              @map("persona_id") @db.Uuid
+  mascotaId     String              @map("mascota_id") @db.Uuid
+  tipoRelacion  RelacionPropietario @default(Dueno_Principal) @map("tipo_relacion")
+  recibeAlertas Boolean             @default(true) @map("recibe_alertas")
+  mostrarEnQr   Boolean             @default(true) @map("mostrar_en_qr")
+  persona       Persona             @relation(fields: [personaId], references: [id], onDelete: Cascade)
+  mascota       Mascota             @relation(fields: [mascotaId], references: [id], onDelete: Cascade)
+
+  @@id([personaId, mascotaId])
+  @@map("propietarios_mascota")
 }
 
-model HistorialEscaneoQR {
-  id               Int               @id @default(autoincrement())
-  fechaHora        DateTime          @default(now())
-  latitud          Decimal?          @db.Decimal(9, 6)
-  longitud         Decimal?          @db.Decimal(9, 6)
-  
-  qrId             Int
-  qrMascota        QR_Mascota        @relation(fields: [qrId], references: [id])
+model FichaMedica {
+  id                   Int     @id @default(autoincrement()) @map("ficha_id")
+  mascotaId            String  @unique @map("mascota_id") @db.Uuid
+  alergias             String?
+  enfermedadesCronicas String? @map("enfermedades_cronicas")
+  medicacionDiaria     String? @map("medicacion_diaria")
+  tipoSangre           String? @map("tipo_sangre") @db.VarChar(10)
+  notasVeterinarias    String? @map("notas_veterinarias")
+  mascota              Mascota @relation(fields: [mascotaId], references: [id], onDelete: Cascade)
+
+  @@map("fichas_medicas")
 }
 
-model EventoGeocerca {
-  id               Int               @id @default(autoincrement())
-  tipoEvento       String            // Entrada o Salida
-  fechaHora        DateTime          @default(now())
-  latitud          Decimal           @db.Decimal(9, 6)
-  longitud         Decimal           @db.Decimal(9, 6)
-  idDispositivo    String?           // Identificador del smartphone que reporta
-  
-  mascotaId        Int
-  mascota          Mascota           @relation(fields: [mascotaId], references: [id])
+model FotoMascota {
+  id        Int      @id @default(autoincrement()) @map("foto_id")
+  mascotaId String   @map("mascota_id") @db.Uuid
+  fotoUrl   String   @map("foto_url")
+  esPrincipal Boolean @default(false) @map("es_principal")
+  creadoEl  DateTime @default(now()) @map("creado_el") @db.Timestamptz
+  mascota   Mascota  @relation(fields: [mascotaId], references: [id], onDelete: Cascade)
+
+  @@map("fotos_mascota")
 }
 
-model AlertaPerdida {
-  id               Int               @id @default(autoincrement())
-  fechaReporte     DateTime          @default(now())
-  descripcion      String?           @db.Text
-  latitud          Decimal           @db.Decimal(9, 6)
-  longitud         Decimal           @db.Decimal(9, 6)
-  
-  mascotaId        Int
-  mascota          Mascota           @relation(fields: [mascotaId], references: [id])
+model PlacaQr {
+  id              String   @id @default(dbgenerated("uuid_generate_v4()")) @map("placa_id") @db.Uuid
+  mascotaId       String?  @unique @map("mascota_id") @db.Uuid
+  tokenAcceso     String   @unique @default(dbgenerated("uuid_generate_v4()")) @map("token_acceso") @db.Uuid
+  estaActiva      Boolean  @default(true) @map("esta_activa")
+  fechaActivacion DateTime @default(now()) @map("fecha_activacion") @db.Timestamptz
+  mascota         Mascota? @relation(fields: [mascotaId], references: [id], onDelete: SetNull)
+
+  @@map("placas_qr")
 }
 
-model Notificacion {
-  id               Int               @id @default(autoincrement())
-  mensaje          String
-  fechaHora        DateTime          @default(now())
-  tipo             String            // Alerta, Informativa, etc.
-  leida            Boolean           @default(false)
-  
-  usuarioId        Int
-  usuario          Usuario           @relation(fields: [usuarioId], references: [id])
+// Para campos de Geometría (PostGIS), Prisma usa Unsupported
+model ZonaSegura {
+  id         Int      @id @default(autoincrement()) @map("zona_id")
+  mascotaId  String   @map("mascota_id") @db.Uuid
+  nombreZona String?  @map("nombre_zona") @db.VarChar(100)
+  geometria  Unsupported("geometry(Polygon, 4326)")
+  estaActiva Boolean  @default(true) @map("esta_activa")
+  mascota    Mascota  @relation(fields: [mascotaId], references: [id], onDelete: Cascade)
+
+  @@map("zonas_seguras")
+}
+
+model HistorialUbicacion {
+  logId     BigInt   @map("log_id")
+  usuarioId String?  @map("usuario_id") @db.Uuid
+  posicion  Unsupported("geometry(Point, 4326)")
+  fechaHora DateTime @default(now()) @map("fecha_hora") @db.Timestamptz
+  usuario   Usuario? @relation(fields: [usuarioId], references: [id])
+
+  @@id([logId, fechaHora])
+  @@map("historial_ubicaciones")
+}
+
+model ReporteExtravio {
+  id                      Int      @id @default(autoincrement()) @map("reporte_id")
+  mascotaId               String   @map("mascota_id") @db.Uuid
+  fechaPerdida            DateTime @map("fecha_perdida") @db.Timestamptz
+  ultimaUbicacionConocida Unsupported("geometry(Point, 4326)")? @map("ultima_ubicacion_conocida")
+  recompensa              Decimal  @default(0.00) @db.Decimal(10, 2)
+  estadoReporte           String   @default("abierto") @map("estado_reporte") @db.VarChar(20)
+  mascota                 Mascota  @relation(fields: [mascotaId], references: [id], onDelete: Cascade)
+
+  @@map("reportes_extravio")
+}
+
+model Avistamiento {
+  id                String   @id @default(dbgenerated("uuid_generate_v4()")) @map("avistamiento_id") @db.Uuid
+  mascotaId         String   @map("mascota_id") @db.Uuid
+  ubicacionGps      Unsupported("geometry(Point, 4326)") @map("ubicacion_gps")
+  mensajeRescatista String?  @map("mensaje_rescatista")
+  fotoEvidenciaUrl  String?  @map("foto_evidencia_url")
+  fechaAvistamiento DateTime @default(now()) @map("fecha_avistamiento") @db.Timestamptz
+  mascota           Mascota  @relation(fields: [mascotaId], references: [id], onDelete: Cascade)
+
+  @@map("avistamientos")
 }
