@@ -6,12 +6,17 @@ datasource db {
   provider   = "postgresql"
 }
 
-// --- ENUMS ---
+// =============================================================================
+// ENUMS
+// =============================================================================
+
 enum EstadoMascota {
   en_casa
   en_paseo
   extraviada
   recuperada
+
+  @@map("estado_mascota")
 }
 
 enum TipoContacto {
@@ -19,179 +24,258 @@ enum TipoContacto {
   Celular
   Fijo
   Telegram
+
+  @@map("tipo_contacto")
 }
 
 enum RelacionPropietario {
   Dueno_Principal @map("Dueño Principal")
   Familiar
   Cuidador
+
+  @@map("relacion_propietario")
 }
 
-// --- MODELOS ---
+// =============================================================================
+// MÓDULO 1: IDENTIDAD Y USUARIOS
+// =============================================================================
 
 model Persona {
-  id               String               @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  nombre           String               @db.VarChar(100)
-  apellidoPaterno  String               @map("apellido_paterno") @db.VarChar(100)
-  apellidoMaterno  String?              @map("apellido_materno") @db.VarChar(100)
-  ci               String?              @unique @db.VarChar(20)
-  fotoPerfilUrl    String?              @map("foto_perfil_url")
-  fechaNacimiento  DateTime?            @map("fecha_nacimiento") @db.Date
-  creadoEl         DateTime             @default(now()) @map("creado_el") @db.Timestamptz
-  usuarios         Usuario[]
-  mediosContacto   MedioContacto[]
-  mascotasPropiedad PropietarioMascota[]
+  personaId         String    @id @default(dbgenerated("uuid_generate_v4()")) @map("persona_id") @db.Uuid
+  nombre            String    @db.VarChar(100)
+  apellidoPaterno   String    @map("apellido_paterno") @db.VarChar(100)
+  apellidoMaterno   String?   @map("apellido_materno") @db.VarChar(100)
+  ci                String?   @unique @db.VarChar(20)
+  fotoPerfilUrl     String?   @map("foto_perfil_url")
+  fechaNacimiento   DateTime? @map("fecha_nacimiento") @db.Date
+  creadoEl          DateTime? @default(now()) @map("creado_el") @db.Timestamptz
+
+  // Relaciones
+  usuario             Usuario?
+  mediosContacto      MedioContacto[]
+  mascotasPropietario PropietarioMascota[]
 
   @@map("personas")
 }
 
 model Usuario {
-  id               String      @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  personaId        String      @map("persona_id") @db.Uuid
-  correo           String      @unique @map("correo_electronico") @db.VarChar(255)
-  claveHash        String      @map("clave_hash")
-  tokenFcm         String?     @map("token_fcm")
-  configPrivacidad Json?       @default("{\"mostrar_foto_qr\": true, \"notificar_por_correo\": true}") @map("config_privacidad")
-  ultimoAcceso     DateTime?   @map("ultimo_acceso") @db.Timestamptz
-  estadoCuenta     String      @default("activa") @map("estado_cuenta") @db.VarChar(20)
-  persona          Persona     @relation(fields: [personaId], references: [id], onDelete: Cascade)
-  historialUbic   HistorialUbicacion[]
+  usuarioId               String    @id @default(dbgenerated("uuid_generate_v4()")) @map("usuario_id") @db.Uuid
+  personaId               String    @unique @map("persona_id") @db.Uuid
+  correoElectronico       String    @unique @map("correo_electronico") @db.VarChar(255)
+  claveHash               String    @map("clave_hash")
+  tokenFcm                String?   @map("token_fcm")
+  configPrivacidad        Json?     @default("{\"mostrar_foto_qr\": true}") @map("config_privacidad")
+  
+  // PostGIS: Las geometrías en Prisma se manejan como tipo Unsupported
+  ultimaUbicacionConocida Unsupported("geometry(Point, 4326)")? @map("ultima_ubicacion_conocida")
+  fechaUltimaUbicacion    DateTime? @map("fecha_ultima_ubicacion") @db.Timestamptz
+  
+  ultimoAcceso            DateTime? @map("ultimo_acceso") @db.Timestamptz
+  estadoCuenta            String?   @default("activa") @map("estado_cuenta") @db.VarChar(20)
+
+  // Relaciones
+  persona                 Persona   @relation(fields: [personaId], references: [personaId], onDelete: Cascade)
+  historialUbicaciones    HistorialUbicacion[]
+  agradecimientos         AgradecimientoRescatista[]
 
   @@map("usuarios")
 }
 
 model MedioContacto {
-  id        Int          @id @default(autoincrement()) @map("contacto_id")
-  personaId String       @map("persona_id") @db.Uuid
-  tipo      TipoContacto
-  valor     String       @db.VarChar(50)
-  esPrincipal Boolean    @default(false) @map("es_principal")
-  persona   Persona      @relation(fields: [personaId], references: [id], onDelete: Cascade)
+  contactoId  Int          @id @default(autoincrement()) @map("contacto_id")
+  personaId   String       @map("persona_id") @db.Uuid
+  tipo        TipoContacto
+  valor       String       @db.VarChar(50)
+  esPrincipal Boolean?     @default(false) @map("es_principal")
+
+  persona Persona @relation(fields: [personaId], references: [personaId], onDelete: Cascade)
 
   @@map("medios_contacto")
 }
 
+// =============================================================================
+// MÓDULO 2: MASCOTAS Y FICHAS CLÍNICAS
+// =============================================================================
+
 model Raza {
-  id       Int       @id @default(autoincrement()) @map("raza_id")
-  nombre   String    @db.VarChar(100)
-  especie  String    @db.VarChar(50)
+  razaId  Int       @id @default(autoincrement()) @map("raza_id")
+  nombre  String    @db.VarChar(100)
+  especie String    @db.VarChar(50)
+  
   mascotas Mascota[]
 
   @@map("razas")
 }
 
 model Mascota {
-  id                 String               @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  nombre             String               @db.VarChar(100)
-  razaId             Int?                 @map("raza_id")
-  sexo               String?              @db.Char(1)
-  colorPrimario      String?              @map("color_primario") @db.VarChar(50)
-  rasgosParticulares String?              @map("rasgos_particulares")
-  estado             EstadoMascota        @default(en_casa)
-  creadoEl           DateTime             @default(now()) @map("creado_el") @db.Timestamptz
-  raza               Raza?                @relation(fields: [razaId], references: [id])
-  propietarios       PropietarioMascota[]
-  fichaMedica        FichaMedica?
-  fotos              FotoMascota[]
-  placaQr            PlacaQr?
-  zonasSeguras       ZonaSegura[]
-  reportes           ReporteExtravio[]
-  avistamientos      Avistamiento[]
+  mascotaId               String        @id @default(dbgenerated("uuid_generate_v4()")) @map("mascota_id") @db.Uuid
+  nombre                  String        @db.VarChar(100)
+  razaId                  Int?          @map("raza_id")
+  sexo                    String?       @db.Char(1)
+  colorPrimario           String?       @map("color_primario") @db.VarChar(50)
+  rasgosParticulares      String?       @map("rasgos_particulares")
+  estado                  EstadoMascota? @default(en_casa)
+  
+  ultimaUbicacionConocida Unsupported("geometry(Point, 4326)")? @map("ultima_ubicacion_conocida")
+  fechaUltimaUbicacion    DateTime?     @map("fecha_ultima_ubicacion") @db.Timestamptz
+  creadoEl                DateTime?     @default(now()) @map("creado_el") @db.Timestamptz
+
+  // Relaciones
+  raza                Raza?                @relation(fields: [razaId], references: [razaId])
+  propietarios        PropietarioMascota[]
+  fichaMedica         FichaMedica?
+  fotos               FotoMascota[]
+  placaQr             PlacaQr?
+  zonasSeguras        ZonaSegura[]
+  registroVisitas     RegistroVisitaZona[]
+  reportesExtravio    ReporteExtravio[]
+  avistamientos       Avistamiento[]
 
   @@map("mascotas")
 }
 
 model PropietarioMascota {
-  personaId     String              @map("persona_id") @db.Uuid
-  mascotaId     String              @map("mascota_id") @db.Uuid
-  tipoRelacion  RelacionPropietario @default(Dueno_Principal) @map("tipo_relacion")
-  recibeAlertas Boolean             @default(true) @map("recibe_alertas")
-  mostrarEnQr   Boolean             @default(true) @map("mostrar_en_qr")
-  persona       Persona             @relation(fields: [personaId], references: [id], onDelete: Cascade)
-  mascota       Mascota             @relation(fields: [mascotaId], references: [id], onDelete: Cascade)
+  personaId    String              @map("persona_id") @db.Uuid
+  mascotaId    String              @map("mascota_id") @db.Uuid
+  tipoRelacion RelacionPropietario? @default(Dueno_Principal) @map("tipo_relacion")
+  recibeAlertas Boolean?           @default(true) @map("recibe_alertas")
+  mostrarEnQr   Boolean?           @default(true) @map("mostrar_en_qr")
+
+  persona Persona @relation(fields: [personaId], references: [personaId], onDelete: Cascade)
+  mascota Mascota @relation(fields: [mascotaId], references: [mascotaId], onDelete: Cascade)
 
   @@id([personaId, mascotaId])
   @@map("propietarios_mascota")
 }
 
 model FichaMedica {
-  id                   Int     @id @default(autoincrement()) @map("ficha_id")
+  fichaId              Int     @id @default(autoincrement()) @map("ficha_id")
   mascotaId            String  @unique @map("mascota_id") @db.Uuid
   alergias             String?
   enfermedadesCronicas String? @map("enfermedades_cronicas")
   medicacionDiaria     String? @map("medicacion_diaria")
   tipoSangre           String? @map("tipo_sangre") @db.VarChar(10)
   notasVeterinarias    String? @map("notas_veterinarias")
-  mascota              Mascota @relation(fields: [mascotaId], references: [id], onDelete: Cascade)
+
+  mascota Mascota @relation(fields: [mascotaId], references: [mascotaId], onDelete: Cascade)
 
   @@map("fichas_medicas")
 }
 
 model FotoMascota {
-  id        Int      @id @default(autoincrement()) @map("foto_id")
-  mascotaId String   @map("mascota_id") @db.Uuid
-  fotoUrl   String   @map("foto_url")
-  esPrincipal Boolean @default(false) @map("es_principal")
-  creadoEl  DateTime @default(now()) @map("creado_el") @db.Timestamptz
-  mascota   Mascota  @relation(fields: [mascotaId], references: [id], onDelete: Cascade)
+  fotoId      Int       @id @default(autoincrement()) @map("foto_id")
+  mascotaId   String    @map("mascota_id") @db.Uuid
+  fotoUrl     String    @map("foto_url")
+  esPrincipal Boolean?  @default(false) @map("es_principal")
+  creadoEl    DateTime? @default(now()) @map("creado_el") @db.Timestamptz
+
+  mascota Mascota @relation(fields: [mascotaId], references: [mascotaId], onDelete: Cascade)
 
   @@map("fotos_mascota")
 }
 
+// =============================================================================
+// MÓDULO 3: GEOFENCING Y TELEMÁTICA (QR Y GPS)
+// =============================================================================
+
 model PlacaQr {
-  id              String   @id @default(dbgenerated("uuid_generate_v4()")) @map("placa_id") @db.Uuid
-  mascotaId       String?  @unique @map("mascota_id") @db.Uuid
-  tokenAcceso     String   @unique @default(dbgenerated("uuid_generate_v4()")) @map("token_acceso") @db.Uuid
-  estaActiva      Boolean  @default(true) @map("esta_activa")
-  fechaActivacion DateTime @default(now()) @map("fecha_activacion") @db.Timestamptz
-  mascota         Mascota? @relation(fields: [mascotaId], references: [id], onDelete: SetNull)
+  placaId         String    @id @default(dbgenerated("uuid_generate_v4()")) @map("placa_id") @db.Uuid
+  mascotaId       String?   @unique @map("mascota_id") @db.Uuid
+  tokenAcceso     String?   @unique @default(dbgenerated("uuid_generate_v4()")) @map("token_acceso") @db.Uuid
+  estaActiva      Boolean?  @default(true) @map("esta_activa")
+  fechaActivacion DateTime? @default(now()) @map("fecha_activacion") @db.Timestamptz
+
+  mascota Mascota? @relation(fields: [mascotaId], references: [mascotaId], onDelete: SetNull)
 
   @@map("placas_qr")
 }
 
-// Para campos de Geometría (PostGIS), Prisma usa Unsupported
 model ZonaSegura {
-  id         Int      @id @default(autoincrement()) @map("zona_id")
-  mascotaId  String   @map("mascota_id") @db.Uuid
-  nombreZona String?  @map("nombre_zona") @db.VarChar(100)
-  geometria  Unsupported("geometry(Polygon, 4326)")
-  estaActiva Boolean  @default(true) @map("esta_activa")
-  mascota    Mascota  @relation(fields: [mascotaId], references: [id], onDelete: Cascade)
+  zonaId       Int     @id @default(autoincrement()) @map("zona_id")
+  mascotaId    String? @map("mascota_id") @db.Uuid
+  nombreZona   String? @map("nombre_zona") @db.VarChar(100)
+  
+  geometria    Unsupported("geometry(Polygon, 4326)")?
+  puntoCentral Unsupported("geometry(Point, 4326)")? @map("punto_central")
+  
+  radioMetros  Float?  @map("radio_metros")
+  estaActiva   Boolean? @default(true) @map("esta_activa")
+
+  mascota Mascota? @relation(fields: [mascotaId], references: [mascotaId], onDelete: Cascade)
+  visitas RegistroVisitaZona[]
 
   @@map("zonas_seguras")
 }
 
 model HistorialUbicacion {
-  logId     BigInt   @map("log_id")
-  usuarioId String?  @map("usuario_id") @db.Uuid
+  logId     BigInt    @default(autoincrement()) @map("log_id")
+  usuarioId String?   @map("usuario_id") @db.Uuid
   posicion  Unsupported("geometry(Point, 4326)")
-  fechaHora DateTime @default(now()) @map("fecha_hora") @db.Timestamptz
-  usuario   Usuario? @relation(fields: [usuarioId], references: [id])
+  fechaHora DateTime  @default(now()) @map("fecha_hora") @db.Timestamptz
+
+  usuario Usuario? @relation(fields: [usuarioId], references: [usuarioId])
 
   @@id([logId, fechaHora])
   @@map("historial_ubicaciones")
 }
 
+model RegistroVisitaZona {
+  visitaId         BigInt    @id @default(autoincrement()) @map("visita_id")
+  mascotaId        String?   @map("mascota_id") @db.Uuid
+  zonaId           Int?      @map("zona_id")
+  fechaHoraEntrada DateTime  @map("fecha_hora_entrada") @db.Timestamptz
+  fechaHoraSalida  DateTime? @map("fecha_hora_salida") @db.Timestamptz
+  
+  // NOTA: Prisma no maneja campos GENERATED ALWAYS AS de forma nativa en migraciones.
+  // Este campo se calculará a nivel de base de datos.
+  duracionMinutos  Int?      @map("duracion_minutos")
+
+  mascota Mascota?    @relation(fields: [mascotaId], references: [mascotaId], onDelete: Cascade)
+  zona    ZonaSegura? @relation(fields: [zonaId], references: [zonaId], onDelete: Cascade)
+
+  @@map("registro_visitas_zonas")
+}
+
+// =============================================================================
+// MÓDULO 4: RED COLABORATIVA DE RECUPERACIÓN
+// =============================================================================
+
 model ReporteExtravio {
-  id                      Int      @id @default(autoincrement()) @map("reporte_id")
-  mascotaId               String   @map("mascota_id") @db.Uuid
-  fechaPerdida            DateTime @map("fecha_perdida") @db.Timestamptz
+  reporteId               Int       @id @default(autoincrement()) @map("reporte_id")
+  mascotaId               String?   @map("mascota_id") @db.Uuid
+  fechaPerdida            DateTime  @map("fecha_perdida") @db.Timestamptz
   ultimaUbicacionConocida Unsupported("geometry(Point, 4326)")? @map("ultima_ubicacion_conocida")
-  recompensa              Decimal  @default(0.00) @db.Decimal(10, 2)
-  estadoReporte           String   @default("abierto") @map("estado_reporte") @db.VarChar(20)
-  mascota                 Mascota  @relation(fields: [mascotaId], references: [id], onDelete: Cascade)
+  recompensa              Decimal?  @default(0.00) @db.Decimal(10, 2)
+  estadoReporte           String?   @default("abierto") @map("estado_reporte") @db.VarChar(20)
+
+  mascota Mascota? @relation(fields: [mascotaId], references: [mascotaId], onDelete: Cascade)
 
   @@map("reportes_extravio")
 }
 
 model Avistamiento {
-  id                String   @id @default(dbgenerated("uuid_generate_v4()")) @map("avistamiento_id") @db.Uuid
-  mascotaId         String   @map("mascota_id") @db.Uuid
-  ubicacionGps      Unsupported("geometry(Point, 4326)") @map("ubicacion_gps")
-  mensajeRescatista String?  @map("mensaje_rescatista")
-  fotoEvidenciaUrl  String?  @map("foto_evidencia_url")
-  fechaAvistamiento DateTime @default(now()) @map("fecha_avistamiento") @db.Timestamptz
-  mascota           Mascota  @relation(fields: [mascotaId], references: [id], onDelete: Cascade)
+  avistamientoId     String    @id @default(dbgenerated("uuid_generate_v4()")) @map("avistamiento_id") @db.Uuid
+  mascotaId          String?   @map("mascota_id") @db.Uuid
+  ubicacionGps       Unsupported("geometry(Point, 4326)") @map("ubicacion_gps")
+  mensajeRescatista  String?   @map("mensaje_rescatista")
+  fotoEvidenciaUrl   String?   @map("foto_evidencia_url")
+  fechaAvistamiento  DateTime? @default(now()) @map("fecha_avistamiento") @db.Timestamptz
+
+  mascota         Mascota? @relation(fields: [mascotaId], references: [mascotaId], onDelete: Cascade)
+  agradecimientos AgradecimientoRescatista[]
 
   @@map("avistamientos")
+}
+
+model AgradecimientoRescatista {
+  agradecimientoId Int       @id @default(autoincrement()) @map("agradecimiento_id")
+  avistamientoId   String?   @map("avistamiento_id") @db.Uuid
+  autorUsuarioId   String?   @map("autor_usuario_id") @db.Uuid
+  mensaje          String
+  creadoEl         DateTime? @default(now()) @map("creado_el") @db.Timestamptz
+
+  avistamiento Avistamiento? @relation(fields: [avistamientoId], references: [avistamientoId], onDelete: Cascade)
+  autor        Usuario?      @relation(fields: [autorUsuarioId], references: [usuarioId], onDelete: SetNull)
+
+  @@map("agradecimientos_rescatistas")
 }
