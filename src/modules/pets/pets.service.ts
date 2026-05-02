@@ -1,4 +1,199 @@
-import { Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import * as QRCode from 'qrcode';
+import { PrismaService } from '../../prisma/prisma.service';
+import { CreatePetDto } from './dto/create-pet.dto';
+import { UpdatePetDto } from './dto/update-pet.dto';
+import { AddOwnerDto } from './dto/add-owner.dto';
+import { RelacionPropietario } from '@prisma/client';
 
 @Injectable()
-export class PetsService {}
+export class PetsService {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
+  ) {}
+
+  async create(personaId: string, dto: CreatePetDto) {
+    return this.prisma.$transaction(async (tx) => {
+      const mascota = await tx.mascota.create({
+        data: {
+          nombre: dto.nombre,
+          razaId: dto.razaId,
+          sexo: dto.sexo,
+          colorPrimario: dto.colorPrimario,
+          rasgosParticulares: dto.rasgosParticulares,
+          propietarios: {
+            create: {
+              personaId,
+              tipoRelacion: RelacionPropietario.Dueno_Principal,
+              recibeAlertas: true,
+              mostrarEnQr: true,
+            },
+          },
+        },
+        include: { placaQr: true, propietarios: true },
+      });
+
+      const placa = await tx.placaQr.create({
+        data: { mascotaId: mascota.mascotaId },
+      });
+
+      return { ...mascota, placaQr: placa };
+    });
+  }
+
+  async findMyPets(personaId: string) {
+    return this.prisma.mascota.findMany({
+      where: {
+        propietarios: { some: { personaId } },
+      },
+      include: {
+        raza: true,
+        placaQr: { select: { placaId: true, tokenAcceso: true, estaActiva: true } },
+        fotos: { where: { esPrincipal: true }, take: 1 },
+        propietarios: { include: { persona: true } },
+      },
+    });
+  }
+
+  async findOne(mascotaId: string, personaId: string) {
+    const mascota = await this.prisma.mascota.findUnique({
+      where: { mascotaId },
+      include: {
+        raza: true,
+        placaQr: true,
+        fotos: true,
+        fichaMedica: true,
+        propietarios: { include: { persona: { include: { mediosContacto: true } } } },
+      },
+    });
+    if (!mascota) throw new NotFoundException('Mascota no encontrada');
+    this.checkOwnership(mascota, personaId);
+
+    const geo = await this.prisma.$queryRaw<Array<{ lat: number | null; lng: number | null }>>`
+      SELECT
+        ST_Y(ultima_ubicacion_conocida::geometry) AS lat,
+        ST_X(ultima_ubicacion_conocida::geometry) AS lng
+      FROM mascotas
+      WHERE mascota_id = ${mascotaId}::uuid
+    `;
+
+    return {
+      ...mascota,
+      ubicacion: geo[0]?.lat != null ? { lat: geo[0].lat, lng: geo[0].lng } : null,
+    };
+  }
+
+  async update(mascotaId: string, personaId: string, dto: UpdatePetDto) {
+    const mascota = await this.prisma.mascota.findUnique({
+      where: { mascotaId },
+      include: { propietarios: true },
+    });
+    if (!mascota) throw new NotFoundException('Mascota no encontrada');
+    this.checkOwnership(mascota, personaId);
+
+    return this.prisma.mascota.update({
+      where: { mascotaId },
+      data: {
+        ...(dto.nombre && { nombre: dto.nombre }),
+        ...(dto.razaId !== undefined && { razaId: dto.razaId }),
+        ...(dto.sexo !== undefined && { sexo: dto.sexo }),
+        ...(dto.colorPrimario !== undefined && { colorPrimario: dto.colorPrimario }),
+        ...(dto.rasgosParticulares !== undefined && {
+          rasgosParticulares: dto.rasgosParticulares,
+        }),
+      },
+    });
+  }
+
+  async remove(mascotaId: string, personaId: string) {
+    const mascota = await this.prisma.mascota.findUnique({
+      where: { mascotaId },
+      include: { propietarios: true },
+    });
+    if (!mascota) throw new NotFoundException('Mascota no encontrada');
+    this.checkOwnership(mascota, personaId);
+
+    await this.prisma.mascota.delete({ where: { mascotaId } });
+    return { message: 'Mascota eliminada' };
+  }
+
+  async getQr(mascotaId: string, personaId: string): Promise<string> {
+    const mascota = await this.prisma.mascota.findUnique({
+      where: { mascotaId },
+      include: { propietarios: true, placaQr: true },
+    });
+    if (!mascota) throw new NotFoundException('Mascota no encontrada');
+    this.checkOwnership(mascota, personaId);
+    if (!mascota.placaQr) throw new NotFoundException('La mascota no tiene placa QR');
+
+    const frontendUrl = this.config.get<string>('FRONTEND_URL', 'https://petfinder.app');
+    const url = `${frontendUrl}/scan/${mascota.placaQr.tokenAcceso}`;
+    return QRCode.toDataURL(url);
+  }
+
+  async addOwner(mascotaId: string, personaId: string, dto: AddOwnerDto) {
+    const mascota = await this.prisma.mascota.findUnique({
+      where: { mascotaId },
+      include: { propietarios: true },
+    });
+    if (!mascota) throw new NotFoundException('Mascota no encontrada');
+    this.checkOwnership(mascota, personaId);
+
+    return this.prisma.propietarioMascota.create({
+      data: {
+        mascotaId,
+        personaId: dto.personaId,
+        tipoRelacion: dto.tipoRelacion ?? RelacionPropietario.Cuidador,
+        recibeAlertas: dto.recibeAlertas ?? true,
+        mostrarEnQr: dto.mostrarEnQr ?? true,
+      },
+    });
+  }
+
+  async removeOwner(mascotaId: string, personaId: string, targetPersonaId: string) {
+    const mascota = await this.prisma.mascota.findUnique({
+      where: { mascotaId },
+      include: { propietarios: true },
+    });
+    if (!mascota) throw new NotFoundException('Mascota no encontrada');
+    this.checkOwnership(mascota, personaId);
+
+    return this.prisma.propietarioMascota.delete({
+      where: { personaId_mascotaId: { personaId: targetPersonaId, mascotaId } },
+    });
+  }
+
+  async findPetsOnMap(personaId: string) {
+    return this.prisma.$queryRaw<
+      Array<{
+        mascota_id: string;
+        nombre: string;
+        estado: string;
+        lat: number;
+        lng: number;
+      }>
+    >`
+      SELECT
+        m.mascota_id,
+        m.nombre,
+        m.estado,
+        ST_Y(m.ultima_ubicacion_conocida::geometry) AS lat,
+        ST_X(m.ultima_ubicacion_conocida::geometry) AS lng
+      FROM mascotas m
+      JOIN propietarios_mascota pm ON pm.mascota_id = m.mascota_id
+      JOIN personas p ON p.persona_id = pm.persona_id
+      WHERE pm.persona_id = ${personaId}::uuid
+        AND m.ultima_ubicacion_conocida IS NOT NULL
+    `;
+  }
+
+  private checkOwnership(
+    mascota: { propietarios: Array<{ personaId: string }> },
+    personaId: string,
+  ) {
+    const esPropietario = mascota.propietarios.some((p) => p.personaId === personaId);
+    if (!esPropietario) throw new ForbiddenException('No tienes acceso a esta mascota');
+  }
+}
