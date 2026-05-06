@@ -47,13 +47,23 @@ describe('PetsController', () => {
     expect(controller).toBeDefined();
   });
 
-  it('create delega a petsService.create con personaId y DTO', async () => {
+  it('create sin fotos delega con arrays vacío e índice 0', async () => {
     const dto: CreatePetDto = { nombre: 'Firulais' };
     mockPetsService.create.mockResolvedValue({ mascotaId: MASCOTA_ID });
 
-    await controller.create(PERSONA_ID, dto);
+    await controller.create(PERSONA_ID, dto, undefined, undefined);
 
-    expect(mockPetsService.create).toHaveBeenCalledWith(PERSONA_ID, dto);
+    expect(mockPetsService.create).toHaveBeenCalledWith(PERSONA_ID, dto, [], 0);
+  });
+
+  it('create con fotos pasa archivos e índice correcto', async () => {
+    const dto: CreatePetDto = { nombre: 'Firulais' };
+    const files = [{ buffer: Buffer.from('img'), mimetype: 'image/jpeg' }] as Express.Multer.File[];
+    mockPetsService.create.mockResolvedValue({ mascotaId: MASCOTA_ID, fotos: [{}] });
+
+    await controller.create(PERSONA_ID, dto, files, '1');
+
+    expect(mockPetsService.create).toHaveBeenCalledWith(PERSONA_ID, dto, files, 1);
   });
 
   it('findAll delega a petsService.findMyPets', async () => {

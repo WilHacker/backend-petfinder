@@ -26,8 +26,24 @@ export class PetsService {
     private readonly cloudinary: CloudinaryService,
   ) {}
 
-  async create(personaId: string, dto: CreatePetDto) {
-    return this.prisma.$transaction(async (tx) => {
+  async create(
+    personaId: string,
+    dto: CreatePetDto,
+    files: Express.Multer.File[] = [],
+    fotoPrincipalIndex = 0,
+  ) {
+    if (files.length > MAX_FOTOS)
+      throw new BadRequestException(`Máximo ${MAX_FOTOS} fotos permitidas`);
+
+    const invalidType = files.find((f) => !ALLOWED_MIME.includes(f.mimetype));
+    if (invalidType)
+      throw new BadRequestException('Solo se permiten imágenes (jpeg, png, webp, gif)');
+
+    const oversized = files.find((f) => f.size > MAX_FILE_SIZE);
+    if (oversized) throw new BadRequestException('Cada imagen debe pesar menos de 5 MB');
+
+    // 1. Crear mascota + placa QR en transacción
+    const { mascota, placa } = await this.prisma.$transaction(async (tx) => {
       const mascota = await tx.mascota.create({
         data: {
           nombre: dto.nombre,
@@ -51,8 +67,29 @@ export class PetsService {
         data: { mascotaId: mascota.mascotaId },
       });
 
-      return { ...mascota, placaQr: placa };
+      return { mascota, placa };
     });
+
+    // 2. Subir fotos a Cloudinary e insertar en BD (fuera de la transacción de BD)
+    let fotos: { fotoId: number; fotoUrl: string; esPrincipal: boolean | null }[] = [];
+    if (files.length > 0) {
+      const uploads = await Promise.all(
+        files.map((f) => this.cloudinary.uploadBuffer(f.buffer, `mascotas/${mascota.mascotaId}`)),
+      );
+      fotos = await this.prisma.$transaction(
+        uploads.map((upload, i) =>
+          this.prisma.fotoMascota.create({
+            data: {
+              mascotaId: mascota.mascotaId,
+              fotoUrl: upload.secure_url,
+              esPrincipal: i === fotoPrincipalIndex,
+            },
+          }),
+        ),
+      );
+    }
+
+    return { ...mascota, placaQr: placa, fotos };
   }
 
   async findMyPets(personaId: string) {

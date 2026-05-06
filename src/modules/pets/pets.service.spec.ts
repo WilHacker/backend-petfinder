@@ -104,21 +104,72 @@ describe('PetsService', () => {
   // ───────────────────────── create ────────────────────────────
 
   describe('create', () => {
-    it('crea mascota y placa QR en una transacción', async () => {
-      const txMascota = { ...mockMascota, propietarios: [], placaQr: null };
-      mockPrisma.$transaction.mockImplementation(
-        async (cb: (tx: typeof mockPrisma) => Promise<unknown>) =>
-          cb({
+    const txMascota = { ...mockMascota, propietarios: [], placaQr: null };
+
+    beforeEach(() => {
+      mockPrisma.$transaction.mockImplementation(async (opsOrCb: unknown) => {
+        if (typeof opsOrCb === 'function') {
+          return (opsOrCb as (tx: typeof mockPrisma) => Promise<unknown>)({
             ...mockPrisma,
             mascota: { ...mockPrisma.mascota, create: jest.fn().mockResolvedValue(txMascota) },
             placaQr: { create: jest.fn().mockResolvedValue(mockPlaca) },
-          }),
-      );
+          });
+        }
+        return Promise.all(opsOrCb as Promise<unknown>[]);
+      });
+    });
 
+    it('crea mascota y placa QR sin fotos', async () => {
       const result = await service.create(PERSONA_ID, { nombre: 'Firulais' });
 
       expect(result).toHaveProperty('placaQr');
+      expect(result.fotos).toHaveLength(0);
       expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+    });
+
+    it('crea mascota y sube fotos a Cloudinary cuando se envían archivos', async () => {
+      const fakeFile: Express.Multer.File = {
+        buffer: Buffer.from('img'),
+        mimetype: 'image/jpeg',
+        originalname: 'foto.jpg',
+        size: 500,
+        fieldname: 'fotos',
+        encoding: '7bit',
+        stream: null as never,
+        destination: '',
+        filename: '',
+        path: '',
+      };
+      mockCloudinary.uploadBuffer.mockResolvedValue({ secure_url: FOTO_URL });
+      mockPrisma.fotoMascota.create.mockResolvedValue(mockFoto);
+
+      const result = await service.create(PERSONA_ID, { nombre: 'Firulais' }, [fakeFile], 0);
+
+      expect(mockCloudinary.uploadBuffer).toHaveBeenCalledTimes(1);
+      expect(mockPrisma.fotoMascota.create).toHaveBeenCalledTimes(1);
+      expect(result.fotos).toHaveLength(1);
+    });
+
+    it('lanza BadRequestException si se envían más de 4 fotos', async () => {
+      const files = Array(5).fill({
+        buffer: Buffer.from('x'),
+        mimetype: 'image/jpeg',
+        size: 100,
+      }) as Express.Multer.File[];
+
+      await expect(service.create(PERSONA_ID, { nombre: 'x' }, files)).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('lanza BadRequestException si el MIME no es imagen', async () => {
+      const files = [
+        { buffer: Buffer.from('x'), mimetype: 'application/pdf', size: 100 },
+      ] as Express.Multer.File[];
+
+      await expect(service.create(PERSONA_ID, { nombre: 'x' }, files)).rejects.toThrow(
+        BadRequestException,
+      );
     });
   });
 

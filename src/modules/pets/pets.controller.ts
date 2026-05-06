@@ -30,9 +30,51 @@ export class PetsController {
   constructor(private readonly petsService: PetsService) {}
 
   @Post()
-  @ApiOperation({ summary: 'Registrar perfil de mascota (crea QR automáticamente)' })
-  create(@CurrentUser('personaId') personaId: string, @Body() dto: CreatePetDto) {
-    return this.petsService.create(personaId, dto);
+  @ApiOperation({
+    summary: 'Registrar perfil de mascota con fotos opcionales (crea QR automáticamente)',
+  })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['nombre'],
+      properties: {
+        nombre: { type: 'string', example: 'Firulais' },
+        razaId: { type: 'integer', example: 1 },
+        sexo: { type: 'string', example: 'M' },
+        colorPrimario: { type: 'string', example: 'Café' },
+        rasgosParticulares: { type: 'string', example: 'Mancha blanca en la pata' },
+        fotos: {
+          type: 'array',
+          items: { type: 'string', format: 'binary' },
+          description: '0 a 4 fotos opcionales (jpeg, png, webp, gif — máx. 5 MB cada una)',
+        },
+        fotoPrincipalIndex: {
+          type: 'integer',
+          default: 0,
+          description: 'Índice 0-based de la foto principal',
+        },
+      },
+    },
+  })
+  @UseInterceptors(
+    FilesInterceptor('fotos', 4, {
+      storage: memoryStorage(),
+      limits: { fileSize: 5 * 1024 * 1024 },
+      fileFilter: (_req, file, cb) => {
+        if (file.mimetype.startsWith('image/')) cb(null, true);
+        else cb(new BadRequestException('Solo se permiten imágenes'), false);
+      },
+    }),
+  )
+  create(
+    @CurrentUser('personaId') personaId: string,
+    @Body() dto: CreatePetDto,
+    @UploadedFiles() files?: Express.Multer.File[],
+    @Body('fotoPrincipalIndex') principalIndexStr?: string,
+  ) {
+    const principalIndex = principalIndexStr !== undefined ? parseInt(principalIndexStr, 10) : 0;
+    return this.petsService.create(personaId, dto, files ?? [], principalIndex);
   }
 
   @Get()
