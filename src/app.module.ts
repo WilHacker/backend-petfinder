@@ -3,6 +3,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { CloudinaryModule } from './cloudinary/cloudinary.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
@@ -23,6 +24,7 @@ import { GeofencingModule } from './modules/geofencing/geofencing.module';
       }),
       inject: [ConfigService],
     }),
+    CloudinaryModule,
     PrismaModule,
     AuthModule,
     UsersModule,

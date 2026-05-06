@@ -1,7 +1,8 @@
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
 import { RelacionPropietario } from '@prisma/client';
+import { CloudinaryService } from '../../cloudinary/cloudinary.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PetsService } from './pets.service';
 
@@ -13,6 +14,8 @@ const PERSONA_ID = 'persona-uuid';
 const MASCOTA_ID = 'mascota-uuid';
 const PLACA_ID = 'placa-uuid';
 const TOKEN_ACCESO = 'token-uuid';
+const FOTO_ID = 1;
+const FOTO_URL = 'https://res.cloudinary.com/petImg/image/upload/v123/mascotas/foto.jpg';
 
 const mockPlaca = {
   placaId: PLACA_ID,
@@ -20,6 +23,8 @@ const mockPlaca = {
   tokenAcceso: TOKEN_ACCESO,
   estaActiva: true,
 };
+
+const mockFoto = { fotoId: FOTO_ID, mascotaId: MASCOTA_ID, fotoUrl: FOTO_URL, esPrincipal: true };
 
 const mockMascota = {
   mascotaId: MASCOTA_ID,
@@ -52,6 +57,11 @@ const mockPrisma = {
   placaQr: {
     create: jest.fn(),
   },
+  fotoMascota: {
+    create: jest.fn(),
+    deleteMany: jest.fn(),
+    delete: jest.fn(),
+  },
   $transaction: jest.fn(),
   $queryRaw: jest.fn(),
 };
@@ -62,6 +72,11 @@ const mockConfig = {
     .mockImplementation((key: string, def?: string) =>
       key === 'FRONTEND_URL' ? 'http://localhost:4200' : def,
     ),
+};
+
+const mockCloudinary = {
+  uploadBuffer: jest.fn(),
+  deleteByUrl: jest.fn().mockResolvedValue(undefined),
 };
 
 describe('PetsService', () => {
@@ -75,6 +90,7 @@ describe('PetsService', () => {
         PetsService,
         { provide: PrismaService, useValue: mockPrisma },
         { provide: ConfigService, useValue: mockConfig },
+        { provide: CloudinaryService, useValue: mockCloudinary },
       ],
     }).compile();
 
@@ -268,6 +284,178 @@ describe('PetsService', () => {
       const result = await service.findPetsOnMap(PERSONA_ID);
 
       expect(result).toEqual(mockRows);
+    });
+  });
+
+  // ───────────────────────── uploadPhotos ──────────────────────
+
+  describe('uploadPhotos', () => {
+    const makeFile = (mimetype = 'image/jpeg', size = 1000): Express.Multer.File =>
+      ({
+        buffer: Buffer.from('fake-image'),
+        mimetype,
+        originalname: 'foto.jpg',
+        size,
+        fieldname: 'fotos',
+        encoding: '7bit',
+        stream: null as never,
+        destination: '',
+        filename: '',
+        path: '',
+      }) satisfies Express.Multer.File;
+
+    const mascotaConFotos = { ...mockMascota, fotos: [mockFoto] };
+
+    beforeEach(() => {
+      mockPrisma.mascota.findUnique.mockResolvedValue(mascotaConFotos);
+      mockPrisma.fotoMascota.deleteMany.mockResolvedValue({ count: 1 });
+      mockCloudinary.uploadBuffer.mockResolvedValue({ secure_url: FOTO_URL });
+      mockPrisma.fotoMascota.create.mockResolvedValue(mockFoto);
+      mockPrisma.$transaction.mockImplementation((ops: unknown) =>
+        Array.isArray(ops) ? Promise.all(ops as Promise<unknown>[]) : (ops as () => unknown)(),
+      );
+    });
+
+    it('reemplaza fotos existentes y sube las nuevas a Cloudinary', async () => {
+      const files = [makeFile(), makeFile()];
+
+      const result = await service.uploadPhotos(MASCOTA_ID, PERSONA_ID, files, 0);
+
+      expect(mockCloudinary.deleteByUrl).toHaveBeenCalledWith(FOTO_URL);
+      expect(mockPrisma.fotoMascota.deleteMany).toHaveBeenCalledWith({
+        where: { mascotaId: MASCOTA_ID },
+      });
+      expect(mockCloudinary.uploadBuffer).toHaveBeenCalledTimes(2);
+      expect(mockPrisma.fotoMascota.create).toHaveBeenCalledTimes(2);
+      expect(result).toHaveLength(2);
+    });
+
+    it('marca correctamente la foto principal según el índice', async () => {
+      const files = [makeFile(), makeFile()];
+      const createdFotos = [
+        { ...mockFoto, fotoId: 1, esPrincipal: false },
+        { ...mockFoto, fotoId: 2, esPrincipal: true },
+      ];
+      mockPrisma.fotoMascota.create
+        .mockResolvedValueOnce(createdFotos[0])
+        .mockResolvedValueOnce(createdFotos[1]);
+
+      await service.uploadPhotos(MASCOTA_ID, PERSONA_ID, files, 1);
+
+      const createCalls = mockPrisma.fotoMascota.create.mock.calls;
+      expect(createCalls[0][0].data.esPrincipal).toBe(false);
+      expect(createCalls[1][0].data.esPrincipal).toBe(true);
+    });
+
+    it('lanza BadRequestException si no se envía ningún archivo', async () => {
+      await expect(service.uploadPhotos(MASCOTA_ID, PERSONA_ID, [], 0)).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('lanza BadRequestException si se envían más de 4 archivos', async () => {
+      const files = [makeFile(), makeFile(), makeFile(), makeFile(), makeFile()];
+
+      await expect(service.uploadPhotos(MASCOTA_ID, PERSONA_ID, files, 0)).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('lanza BadRequestException si el MIME no es imagen', async () => {
+      const files = [makeFile('application/pdf')];
+
+      await expect(service.uploadPhotos(MASCOTA_ID, PERSONA_ID, files, 0)).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('lanza BadRequestException si un archivo supera 5 MB', async () => {
+      const files = [makeFile('image/jpeg', 6 * 1024 * 1024)];
+
+      await expect(service.uploadPhotos(MASCOTA_ID, PERSONA_ID, files, 0)).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('lanza NotFoundException si la mascota no existe', async () => {
+      mockPrisma.mascota.findUnique.mockResolvedValue(null);
+
+      await expect(service.uploadPhotos('no-existe', PERSONA_ID, [makeFile()], 0)).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('lanza ForbiddenException si el usuario no es propietario', async () => {
+      mockPrisma.mascota.findUnique.mockResolvedValue({
+        ...mascotaConFotos,
+        propietarios: [{ personaId: 'otro-uuid' }],
+      });
+
+      await expect(service.uploadPhotos(MASCOTA_ID, PERSONA_ID, [makeFile()], 0)).rejects.toThrow(
+        ForbiddenException,
+      );
+    });
+  });
+
+  // ───────────────────────── deletePhoto ───────────────────────
+
+  describe('deletePhoto', () => {
+    const mascotaConDosFotos = {
+      ...mockMascota,
+      fotos: [
+        { fotoId: 1, fotoUrl: FOTO_URL, esPrincipal: true },
+        {
+          fotoId: 2,
+          fotoUrl: 'https://res.cloudinary.com/petImg/image/upload/v123/mascotas/foto2.jpg',
+          esPrincipal: false,
+        },
+      ],
+    };
+
+    it('elimina la foto de Cloudinary y de la BD', async () => {
+      mockPrisma.mascota.findUnique.mockResolvedValue(mascotaConDosFotos);
+      mockPrisma.fotoMascota.delete.mockResolvedValue(mockFoto);
+
+      const result = await service.deletePhoto(MASCOTA_ID, PERSONA_ID, FOTO_ID);
+
+      expect(mockCloudinary.deleteByUrl).toHaveBeenCalledWith(FOTO_URL);
+      expect(mockPrisma.fotoMascota.delete).toHaveBeenCalledWith({ where: { fotoId: FOTO_ID } });
+      expect(result).toEqual({ message: 'Foto eliminada' });
+    });
+
+    it('lanza BadRequestException si es la única foto', async () => {
+      mockPrisma.mascota.findUnique.mockResolvedValue({ ...mockMascota, fotos: [mockFoto] });
+
+      await expect(service.deletePhoto(MASCOTA_ID, PERSONA_ID, FOTO_ID)).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('lanza NotFoundException si la foto no pertenece a la mascota', async () => {
+      mockPrisma.mascota.findUnique.mockResolvedValue(mascotaConDosFotos);
+
+      await expect(service.deletePhoto(MASCOTA_ID, PERSONA_ID, 999)).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('lanza NotFoundException si la mascota no existe', async () => {
+      mockPrisma.mascota.findUnique.mockResolvedValue(null);
+
+      await expect(service.deletePhoto('no-existe', PERSONA_ID, FOTO_ID)).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('lanza ForbiddenException si el usuario no es propietario', async () => {
+      mockPrisma.mascota.findUnique.mockResolvedValue({
+        ...mascotaConDosFotos,
+        propietarios: [{ personaId: 'otro-uuid' }],
+      });
+
+      await expect(service.deletePhoto(MASCOTA_ID, PERSONA_ID, FOTO_ID)).rejects.toThrow(
+        ForbiddenException,
+      );
     });
   });
 });

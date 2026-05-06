@@ -2,12 +2,13 @@ import { JwtService } from '@nestjs/jwt';
 import { Test, TestingModule } from '@nestjs/testing';
 import { PetsController } from './pets.controller';
 import { PetsService } from './pets.service';
+import { AddOwnerDto } from './dto/add-owner.dto';
 import { CreatePetDto } from './dto/create-pet.dto';
 import { UpdatePetDto } from './dto/update-pet.dto';
-import { AddOwnerDto } from './dto/add-owner.dto';
 
 const PERSONA_ID = 'persona-uuid';
 const MASCOTA_ID = 'mascota-uuid';
+const FOTO_ID = 1;
 
 const mockPetsService = {
   create: jest.fn(),
@@ -19,6 +20,8 @@ const mockPetsService = {
   addOwner: jest.fn(),
   removeOwner: jest.fn(),
   findPetsOnMap: jest.fn(),
+  uploadPhotos: jest.fn(),
+  deletePhoto: jest.fn(),
 };
 
 const mockJwtService = { verifyAsync: jest.fn() };
@@ -118,5 +121,60 @@ describe('PetsController', () => {
     await controller.removeOwner(MASCOTA_ID, PERSONA_ID, 'otro-uuid');
 
     expect(mockPetsService.removeOwner).toHaveBeenCalledWith(MASCOTA_ID, PERSONA_ID, 'otro-uuid');
+  });
+
+  // ───────────────────────── Fotos ─────────────────────────────
+
+  describe('replacePhotos', () => {
+    const makeFile = (): Express.Multer.File =>
+      ({
+        buffer: Buffer.from('img'),
+        mimetype: 'image/jpeg',
+        originalname: 'foto.jpg',
+        size: 500,
+        fieldname: 'fotos',
+        encoding: '7bit',
+        stream: null as never,
+        destination: '',
+        filename: '',
+        path: '',
+      }) satisfies Express.Multer.File;
+
+    it('delega a uploadPhotos con índice 0 por defecto', async () => {
+      const files = [makeFile()];
+      mockPetsService.uploadPhotos.mockResolvedValue([{ fotoId: 1 }]);
+
+      await controller.replacePhotos(MASCOTA_ID, PERSONA_ID, files, undefined);
+
+      expect(mockPetsService.uploadPhotos).toHaveBeenCalledWith(MASCOTA_ID, PERSONA_ID, files, 0);
+    });
+
+    it('convierte fotoPrincipalIndex de string a número', async () => {
+      const files = [makeFile(), makeFile()];
+      mockPetsService.uploadPhotos.mockResolvedValue([{}, {}]);
+
+      await controller.replacePhotos(MASCOTA_ID, PERSONA_ID, files, '1');
+
+      expect(mockPetsService.uploadPhotos).toHaveBeenCalledWith(MASCOTA_ID, PERSONA_ID, files, 1);
+    });
+
+    it('pasa array vacío si files es undefined', async () => {
+      mockPetsService.uploadPhotos.mockResolvedValue([]);
+
+      await controller.replacePhotos(MASCOTA_ID, PERSONA_ID, undefined as never, undefined);
+
+      expect(mockPetsService.uploadPhotos).toHaveBeenCalledWith(MASCOTA_ID, PERSONA_ID, [], 0);
+    });
+  });
+
+  describe('deletePhoto', () => {
+    it('delega a petsService.deletePhoto con fotoId numérico', async () => {
+      mockPetsService.deletePhoto.mockResolvedValue({ message: 'Foto eliminada' });
+
+      const result = await controller.deletePhoto(MASCOTA_ID, FOTO_ID, PERSONA_ID);
+
+      expect(mockPetsService.deletePhoto).toHaveBeenCalledWith(MASCOTA_ID, PERSONA_ID, FOTO_ID);
+      expect(result).toEqual({ message: 'Foto eliminada' });
+    });
   });
 });

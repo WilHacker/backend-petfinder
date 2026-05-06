@@ -20,7 +20,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
 
   async onModuleInit() {
     await this.$connect();
-    // eslint-disable-next-line no-console
+
     console.info('⚡ Conexión exitosa a Supabase (PetFinder DB) vía Prisma 7 Adapter');
   }
 

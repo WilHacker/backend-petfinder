@@ -1,11 +1,26 @@
-import { Body, Controller, Delete, Get, Param, Post, Put, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { PetsService } from './pets.service';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  ParseIntPipe,
+  Post,
+  Put,
+  UploadedFiles,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
+import { FilesInterceptor } from '@nestjs/platform-express';
+import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { memoryStorage } from 'multer';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { AddOwnerDto } from './dto/add-owner.dto';
 import { CreatePetDto } from './dto/create-pet.dto';
 import { UpdatePetDto } from './dto/update-pet.dto';
-import { AddOwnerDto } from './dto/add-owner.dto';
-import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { PetsService } from './pets.service';
 
 @ApiTags('Pets')
 @ApiBearerAuth()
@@ -78,5 +93,56 @@ export class PetsController {
     @Param('personaId') targetPersonaId: string,
   ) {
     return this.petsService.removeOwner(mascotaId, personaId, targetPersonaId);
+  }
+
+  @Post(':id/photos')
+  @ApiOperation({ summary: 'Reemplazar fotos de la mascota (mín. 1, máx. 4 imágenes)' })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['fotos'],
+      properties: {
+        fotos: {
+          type: 'array',
+          items: { type: 'string', format: 'binary' },
+          description: '1 a 4 imágenes (jpeg, png, webp, gif — máx. 5 MB cada una)',
+        },
+        fotoPrincipalIndex: {
+          type: 'integer',
+          default: 0,
+          description: 'Índice 0-based de la foto principal',
+        },
+      },
+    },
+  })
+  @UseInterceptors(
+    FilesInterceptor('fotos', 4, {
+      storage: memoryStorage(),
+      limits: { fileSize: 5 * 1024 * 1024 },
+      fileFilter: (_req, file, cb) => {
+        if (file.mimetype.startsWith('image/')) cb(null, true);
+        else cb(new BadRequestException('Solo se permiten imágenes'), false);
+      },
+    }),
+  )
+  replacePhotos(
+    @Param('id') mascotaId: string,
+    @CurrentUser('personaId') personaId: string,
+    @UploadedFiles() files: Express.Multer.File[],
+    @Body('fotoPrincipalIndex') principalIndexStr?: string,
+  ) {
+    const principalIndex = principalIndexStr !== undefined ? parseInt(principalIndexStr, 10) : 0;
+    return this.petsService.uploadPhotos(mascotaId, personaId, files ?? [], principalIndex);
+  }
+
+  @Delete(':id/photos/:fotoId')
+  @ApiOperation({ summary: 'Eliminar una foto de la mascota' })
+  deletePhoto(
+    @Param('id') mascotaId: string,
+    @Param('fotoId', ParseIntPipe) fotoId: number,
+    @CurrentUser('personaId') personaId: string,
+  ) {
+    return this.petsService.deletePhoto(mascotaId, personaId, fotoId);
   }
 }

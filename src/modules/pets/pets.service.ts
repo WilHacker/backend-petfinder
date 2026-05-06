@@ -1,17 +1,29 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as QRCode from 'qrcode';
+import { CloudinaryService } from '../../cloudinary/cloudinary.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AddOwnerDto } from './dto/add-owner.dto';
 import { CreatePetDto } from './dto/create-pet.dto';
 import { UpdatePetDto } from './dto/update-pet.dto';
-import { AddOwnerDto } from './dto/add-owner.dto';
 import { RelacionPropietario } from '@prisma/client';
+
+const MAX_FOTOS = 4;
+const MIN_FOTOS = 1;
+const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
+const ALLOWED_MIME = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 
 @Injectable()
 export class PetsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly cloudinary: CloudinaryService,
   ) {}
 
   async create(personaId: string, dto: CreatePetDto) {
@@ -63,7 +75,7 @@ export class PetsService {
       include: {
         raza: true,
         placaQr: true,
-        fotos: true,
+        fotos: { select: { fotoId: true, fotoUrl: true, esPrincipal: true, creadoEl: true } },
         fichaMedica: true,
         propietarios: { include: { persona: { include: { mediosContacto: true } } } },
       },
@@ -187,6 +199,75 @@ export class PetsService {
       WHERE pm.persona_id = ${personaId}::uuid
         AND m.ultima_ubicacion_conocida IS NOT NULL
     `;
+  }
+
+  // ─────────────────────── Gestión de fotos ────────────────────────
+
+  async uploadPhotos(
+    mascotaId: string,
+    personaId: string,
+    files: Express.Multer.File[],
+    fotoPrincipalIndex = 0,
+  ) {
+    if (files.length < MIN_FOTOS)
+      throw new BadRequestException(`Se requiere al menos ${MIN_FOTOS} foto`);
+    if (files.length > MAX_FOTOS)
+      throw new BadRequestException(`Máximo ${MAX_FOTOS} fotos permitidas`);
+
+    const invalidType = files.find((f) => !ALLOWED_MIME.includes(f.mimetype));
+    if (invalidType)
+      throw new BadRequestException('Solo se permiten imágenes (jpeg, png, webp, gif)');
+
+    const oversized = files.find((f) => f.size > MAX_FILE_SIZE);
+    if (oversized) throw new BadRequestException('Cada imagen debe pesar menos de 5 MB');
+
+    const mascota = await this.prisma.mascota.findUnique({
+      where: { mascotaId },
+      include: { propietarios: true, fotos: true },
+    });
+    if (!mascota) throw new NotFoundException('Mascota no encontrada');
+    this.checkOwnership(mascota, personaId);
+
+    // Eliminar fotos anteriores de Cloudinary y de la BD
+    await Promise.all(mascota.fotos.map((f) => this.cloudinary.deleteByUrl(f.fotoUrl)));
+    await this.prisma.fotoMascota.deleteMany({ where: { mascotaId } });
+
+    // Subir nuevas fotos a Cloudinary
+    const uploads = await Promise.all(
+      files.map((f) => this.cloudinary.uploadBuffer(f.buffer, `mascotas/${mascotaId}`)),
+    );
+
+    // Insertar registros en BD
+    return this.prisma.$transaction(
+      uploads.map((upload, i) =>
+        this.prisma.fotoMascota.create({
+          data: {
+            mascotaId,
+            fotoUrl: upload.secure_url,
+            esPrincipal: i === fotoPrincipalIndex,
+          },
+        }),
+      ),
+    );
+  }
+
+  async deletePhoto(mascotaId: string, personaId: string, fotoId: number) {
+    const mascota = await this.prisma.mascota.findUnique({
+      where: { mascotaId },
+      include: { propietarios: true, fotos: true },
+    });
+    if (!mascota) throw new NotFoundException('Mascota no encontrada');
+    this.checkOwnership(mascota, personaId);
+
+    if (mascota.fotos.length <= MIN_FOTOS)
+      throw new BadRequestException('La mascota debe tener al menos 1 foto');
+
+    const foto = mascota.fotos.find((f) => f.fotoId === fotoId);
+    if (!foto) throw new NotFoundException('Foto no encontrada');
+
+    await this.cloudinary.deleteByUrl(foto.fotoUrl);
+    await this.prisma.fotoMascota.delete({ where: { fotoId } });
+    return { message: 'Foto eliminada' };
   }
 
   private checkOwnership(
