@@ -97,20 +97,19 @@ model MedioContacto {
 // MÓDULO 2: MASCOTAS Y FICHAS CLÍNICAS
 // =============================================================================
 
-model Raza {
-  razaId  Int       @id @default(autoincrement()) @map("raza_id")
-  nombre  String    @db.VarChar(100)
-  especie String    @db.VarChar(50)
-  
+model TipoMascota {
+  tipoId  Int      @id @default(autoincrement()) @map("tipo_id")
+  nombre  String   @db.VarChar(100)
+
   mascotas Mascota[]
 
-  @@map("razas")
+  @@map("tipos_mascota")
 }
 
 model Mascota {
   mascotaId               String        @id @default(dbgenerated("uuid_generate_v4()")) @map("mascota_id") @db.Uuid
   nombre                  String        @db.VarChar(100)
-  razaId                  Int?          @map("raza_id")
+  tipoId                  Int?          @map("tipo_id")
   sexo                    String?       @db.Char(1)
   colorPrimario           String?       @map("color_primario") @db.VarChar(50)
   rasgosParticulares      String?       @map("rasgos_particulares")
@@ -121,7 +120,7 @@ model Mascota {
   creadoEl                DateTime?     @default(now()) @map("creado_el") @db.Timestamptz
 
   // Relaciones
-  raza                Raza?                @relation(fields: [razaId], references: [razaId])
+  tipoMascota         TipoMascota?         @relation(fields: [tipoId], references: [tipoId])
   propietarios        PropietarioMascota[]
   fichaMedica         FichaMedica?
   fotos               FotoMascota[]

@@ -8,11 +8,11 @@ export class CreatePetDto {
   @IsNotEmpty()
   nombre!: string;
 
-  @ApiPropertyOptional({ example: 1, description: 'ID de la raza' })
+  @ApiPropertyOptional({ example: 1, description: 'ID del tipo de mascota' })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
-  razaId?: number;
+  tipoId?: number;
 
   @ApiPropertyOptional({ example: 'M', description: 'M o F' })
   @IsOptional()

@@ -50,7 +50,7 @@ export class PetsService {
         data: {
           mascotaId,
           nombre: dto.nombre,
-          razaId: dto.razaId,
+          tipoId: dto.tipoId,
           sexo: dto.sexo,
           colorPrimario: dto.colorPrimario,
           rasgosParticulares: dto.rasgosParticulares,
@@ -98,7 +98,7 @@ export class PetsService {
         propietarios: { some: { personaId } },
       },
       include: {
-        raza: true,
+        tipoMascota: true,
         placaQr: { select: { placaId: true, tokenAcceso: true, estaActiva: true } },
         fotos: { where: { esPrincipal: true }, take: 1 },
         propietarios: { include: { persona: true } },
@@ -110,7 +110,7 @@ export class PetsService {
     const mascota = await this.prisma.mascota.findUnique({
       where: { mascotaId },
       include: {
-        raza: true,
+        tipoMascota: true,
         placaQr: true,
         fotos: { select: { fotoId: true, fotoUrl: true, esPrincipal: true, creadoEl: true } },
         fichaMedica: true,
@@ -146,7 +146,7 @@ export class PetsService {
       where: { mascotaId },
       data: {
         ...(dto.nombre && { nombre: dto.nombre }),
-        ...(dto.razaId !== undefined && { razaId: dto.razaId }),
+        ...(dto.tipoId !== undefined && { tipoId: dto.tipoId }),
         ...(dto.sexo !== undefined && { sexo: dto.sexo }),
         ...(dto.colorPrimario !== undefined && { colorPrimario: dto.colorPrimario }),
         ...(dto.rasgosParticulares !== undefined && {

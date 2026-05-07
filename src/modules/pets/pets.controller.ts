@@ -40,7 +40,7 @@ export class PetsController {
       required: ['nombre'],
       properties: {
         nombre: { type: 'string', example: 'Firulais' },
-        razaId: { type: 'integer', example: 1 },
+        tipoId: { type: 'integer', example: 1 },
         sexo: { type: 'string', example: 'M' },
         colorPrimario: { type: 'string', example: 'Café' },
         rasgosParticulares: { type: 'string', example: 'Mancha blanca en la pata' },

@@ -29,7 +29,7 @@ const mockFoto = { fotoId: FOTO_ID, mascotaId: MASCOTA_ID, fotoUrl: FOTO_URL, es
 const mockMascota = {
   mascotaId: MASCOTA_ID,
   nombre: 'Firulais',
-  razaId: null,
+  tipoId: null,
   sexo: 'M',
   colorPrimario: 'Café',
   rasgosParticulares: null,
@@ -38,7 +38,7 @@ const mockMascota = {
   placaQr: mockPlaca,
   fotos: [],
   fichaMedica: null,
-  raza: null,
+  tipoMascota: null,
 };
 
 const mockPrisma = {
