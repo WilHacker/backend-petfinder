@@ -9,6 +9,7 @@ import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
 import { PetsModule } from './modules/pets/pets.module';
 import { GeofencingModule } from './modules/geofencing/geofencing.module';
+import { TiposMascotaModule } from './modules/tipos-mascota/tipos-mascota.module';
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { GeofencingModule } from './modules/geofencing/geofencing.module';
     UsersModule,
     PetsModule,
     GeofencingModule,
+    TiposMascotaModule,
   ],
   controllers: [AppController],
   providers: [AppService],
