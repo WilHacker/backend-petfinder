@@ -20,6 +20,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { AddOwnerDto } from './dto/add-owner.dto';
 import { CreatePetDto } from './dto/create-pet.dto';
 import { UpdatePetDto } from './dto/update-pet.dto';
+import { UpdatePetStatusDto } from './dto/update-pet-status.dto';
 import { PetsService } from './pets.service';
 
 @ApiTags('Pets')
@@ -85,6 +86,22 @@ export class PetsController {
   @ApiOperation({ summary: 'Ver mis mascotas en el mapa' })
   getPetsOnMap(@CurrentUser('personaId') personaId: string) {
     return this.petsService.findPetsOnMap(personaId);
+  }
+
+  @Put(':id/status')
+  @ApiOperation({
+    summary: 'Cambiar el estado de la mascota',
+    description:
+      'Valores: en_casa | en_paseo | extraviada | recuperada. ' +
+      'Cuando el estado cambia a en_paseo, las siguientes actualizaciones de ' +
+      'ubicación del dueño propagan automáticamente las coordenadas a la mascota.',
+  })
+  updateStatus(
+    @Param('id') mascotaId: string,
+    @CurrentUser('personaId') personaId: string,
+    @Body() dto: UpdatePetStatusDto,
+  ) {
+    return this.petsService.updateStatus(mascotaId, personaId, dto.estado);
   }
 
   @Get(':id/card')

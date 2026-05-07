@@ -28,7 +28,9 @@ type ZonaSnapshotRow = {
   centro_lng: number | null;
   geometria_json: string | null;
   // JSON_AGG devuelve objeto ya parseado por el driver pg
-  mascotas: Array<{ mascotaId: string; nombre: string; fotoUrl: string | null }> | string;
+  mascotas:
+    | Array<{ mascotaId: string; nombre: string; estado: string | null; fotoUrl: string | null }>
+    | string;
 };
 
 @Injectable()
@@ -95,6 +97,7 @@ export class MapService {
             JSON_BUILD_OBJECT(
               'mascotaId', zm.mascota_id::text,
               'nombre',    m.nombre,
+              'estado',    m.estado::text,
               'fotoUrl',   (SELECT f.foto_url FROM fotos_mascota f
                             WHERE f.mascota_id = m.mascota_id
                             ORDER BY f.es_principal DESC, f.foto_id ASC
@@ -143,6 +146,7 @@ export class MapService {
           mascotas: mascotas as Array<{
             mascotaId: string;
             nombre: string;
+            estado: string | null;
             fotoUrl: string | null;
           }>,
         };

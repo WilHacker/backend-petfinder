@@ -185,10 +185,10 @@ describe('UsersService', () => {
   // ───────────────────────── updateLocation ────────────────────
 
   describe('updateLocation', () => {
-    it('ejecuta UPDATE e INSERT de PostGIS', async () => {
+    it('ejecuta UPDATE usuario, INSERT historial y UPDATE mascotas en_paseo', async () => {
       await service.updateLocation('usuario-uuid', { lat: -17.78, lng: -63.18 });
 
-      expect(mockPrisma.$executeRaw).toHaveBeenCalledTimes(2);
+      expect(mockPrisma.$executeRaw).toHaveBeenCalledTimes(3);
     });
 
     it('retorna mensaje de confirmación', async () => {

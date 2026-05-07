@@ -112,7 +112,7 @@ export class UsersService {
       UPDATE usuarios
       SET
         ultima_ubicacion_conocida = ST_SetSRID(ST_MakePoint(${dto.lng}, ${dto.lat}), 4326),
-        fecha_ultima_ubicacion = NOW()
+        fecha_ultima_ubicacion    = NOW()
       WHERE usuario_id = ${usuarioId}::uuid
     `;
 
@@ -122,6 +122,19 @@ export class UsersService {
         ${usuarioId}::uuid,
         ST_SetSRID(ST_MakePoint(${dto.lng}, ${dto.lat}), 4326)
       )
+    `;
+
+    // Propaga la ubicación a las mascotas en_paseo del dueño
+    await this.prisma.$executeRaw`
+      UPDATE mascotas m
+      SET
+        ultima_ubicacion_conocida = ST_SetSRID(ST_MakePoint(${dto.lng}, ${dto.lat}), 4326),
+        fecha_ultima_ubicacion    = NOW()
+      FROM propietarios_mascota pm
+      JOIN usuarios u ON u.persona_id = pm.persona_id
+      WHERE pm.mascota_id = m.mascota_id
+        AND u.usuario_id  = ${usuarioId}::uuid
+        AND m.estado       = 'en_paseo'::estado_mascota
     `;
 
     return { message: 'Ubicación actualizada' };

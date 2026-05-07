@@ -12,7 +12,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AddOwnerDto } from './dto/add-owner.dto';
 import { CreatePetDto } from './dto/create-pet.dto';
 import { UpdatePetDto } from './dto/update-pet.dto';
-import { RelacionPropietario } from '@prisma/client';
+import { EstadoMascota, RelacionPropietario } from '@prisma/client';
 
 const MAX_FOTOS = 4;
 const MIN_FOTOS = 1;
@@ -211,6 +211,21 @@ export class PetsService {
 
     return this.prisma.propietarioMascota.delete({
       where: { personaId_mascotaId: { personaId: targetPersonaId, mascotaId } },
+    });
+  }
+
+  async updateStatus(mascotaId: string, personaId: string, estado: string) {
+    const mascota = await this.prisma.mascota.findUnique({
+      where: { mascotaId },
+      include: { propietarios: true },
+    });
+    if (!mascota) throw new NotFoundException('Mascota no encontrada');
+    this.checkOwnership(mascota, personaId);
+
+    return this.prisma.mascota.update({
+      where: { mascotaId },
+      data: { estado: estado as EstadoMascota },
+      select: { mascotaId: true, nombre: true, estado: true },
     });
   }
 
