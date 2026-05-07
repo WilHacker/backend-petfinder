@@ -48,7 +48,7 @@ describe('GeofencingController', () => {
       lng: -63.18,
       radioMetros: 200,
     };
-    mockGeofencingService.createZone.mockResolvedValue({ zonaId: ZONA_ID });
+    mockGeofencingService.createZone.mockResolvedValue({ zona_id: ZONA_ID });
 
     await controller.createZone(MASCOTA_ID, PERSONA_ID, dto);
 
@@ -66,31 +66,26 @@ describe('GeofencingController', () => {
   it('findZone delega a geofencingService.findZone con zonaId numérico', async () => {
     mockGeofencingService.findZone.mockResolvedValue({ zona_id: ZONA_ID });
 
-    await controller.findZone(MASCOTA_ID, ZONA_ID, PERSONA_ID);
+    await controller.findZone(ZONA_ID, PERSONA_ID);
 
-    expect(mockGeofencingService.findZone).toHaveBeenCalledWith(MASCOTA_ID, ZONA_ID, PERSONA_ID);
+    expect(mockGeofencingService.findZone).toHaveBeenCalledWith(ZONA_ID, PERSONA_ID);
   });
 
   it('updateZone delega a geofencingService.updateZone', async () => {
     const dto: UpdateZoneDto = { nombreZona: 'Trabajo' };
-    mockGeofencingService.updateZone.mockResolvedValue({ zonaId: ZONA_ID });
+    mockGeofencingService.updateZone.mockResolvedValue({ zona_id: ZONA_ID });
 
-    await controller.updateZone(MASCOTA_ID, ZONA_ID, PERSONA_ID, dto);
+    await controller.updateZone(ZONA_ID, PERSONA_ID, dto);
 
-    expect(mockGeofencingService.updateZone).toHaveBeenCalledWith(
-      MASCOTA_ID,
-      ZONA_ID,
-      PERSONA_ID,
-      dto,
-    );
+    expect(mockGeofencingService.updateZone).toHaveBeenCalledWith(ZONA_ID, PERSONA_ID, dto);
   });
 
   it('removeZone delega a geofencingService.removeZone', async () => {
     mockGeofencingService.removeZone.mockResolvedValue({ message: 'Zona eliminada' });
 
-    const result = await controller.removeZone(MASCOTA_ID, ZONA_ID, PERSONA_ID);
+    const result = await controller.removeZone(ZONA_ID, PERSONA_ID);
 
-    expect(mockGeofencingService.removeZone).toHaveBeenCalledWith(MASCOTA_ID, ZONA_ID, PERSONA_ID);
+    expect(mockGeofencingService.removeZone).toHaveBeenCalledWith(ZONA_ID, PERSONA_ID);
     expect(result).toEqual({ message: 'Zona eliminada' });
   });
 });

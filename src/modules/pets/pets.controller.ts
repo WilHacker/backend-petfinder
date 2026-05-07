@@ -87,6 +87,17 @@ export class PetsController {
     return this.petsService.findPetsOnMap(personaId);
   }
 
+  @Get(':id/card')
+  @ApiOperation({
+    summary: 'Tarjeta de detalle de una mascota (popup del mapa)',
+    description:
+      'Devuelve el perfil completo de la mascota con todas sus fotos y la lista de ' +
+      'propietarios con sus medios de contacto. Accesible para cualquier usuario autenticado.',
+  })
+  getPetCard(@Param('id') mascotaId: string) {
+    return this.petsService.findPetCard(mascotaId);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Detalle de una mascota' })
   findOne(@Param('id') mascotaId: string, @CurrentUser('personaId') personaId: string) {

@@ -58,6 +58,17 @@ export class UsersController {
     return this.usersService.updateLocation(usuarioId, dto);
   }
 
+  @Get(':personaId/card')
+  @ApiOperation({
+    summary: 'Tarjeta de perfil de un usuario (popup del mapa)',
+    description:
+      'Devuelve nombre, foto, medios de contacto y lista de mascotas del usuario indicado. ' +
+      'Accesible para cualquier usuario autenticado.',
+  })
+  getUserCard(@Param('personaId') personaId: string) {
+    return this.usersService.findUserCard(personaId);
+  }
+
   @Get('map')
   @ApiOperation({
     summary:

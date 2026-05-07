@@ -5,11 +5,15 @@ import {
   IsIn,
   IsNotEmpty,
   IsNumber,
+  IsOptional,
   IsString,
+  IsUUID,
   Max,
   Min,
   ValidateIf,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export class CoordDto {
   @ApiProperty({ example: -17.7863 })
@@ -58,5 +62,17 @@ export class CreateZoneDto {
   @ValidateIf((o) => o.tipo === 'poligono')
   @IsArray()
   @ArrayMinSize(3)
+  @ValidateNested({ each: true })
+  @Type(() => CoordDto)
   coordenadas?: CoordDto[];
+
+  @ApiPropertyOptional({
+    type: [String],
+    example: ['uuid-mascota-2', 'uuid-mascota-3'],
+    description: 'IDs adicionales de mascotas a asociar a esta zona (el dueño puede agregar más)',
+  })
+  @IsOptional()
+  @IsArray()
+  @IsUUID('4', { each: true })
+  mascotaIds?: string[];
 }

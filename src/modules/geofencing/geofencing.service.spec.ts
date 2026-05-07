@@ -8,16 +8,10 @@ const MASCOTA_ID = 'mascota-uuid';
 const ZONA_ID = 1;
 
 const mockRelacion = { personaId: PERSONA_ID, mascotaId: MASCOTA_ID };
+const mockZonaMascotaRel = { zonaId: ZONA_ID, mascotaId: MASCOTA_ID };
 
-const mockZona = {
-  zonaId: ZONA_ID,
-  mascotaId: MASCOTA_ID,
-  nombreZona: 'Casa',
-  radioMetros: 200,
-  estaActiva: true,
-};
-
-const mockZonaRaw = {
+// Forma que devuelve el $queryRaw de findZone (incluye mascota_ids)
+const mockZonaDetailRaw = {
   zona_id: ZONA_ID,
   nombre_zona: 'Casa',
   radio_metros: 200,
@@ -25,18 +19,13 @@ const mockZonaRaw = {
   centro_lat: -17.78,
   centro_lng: -63.18,
   geometria_geojson: null,
+  mascota_ids: [MASCOTA_ID],
 };
 
 const mockPrisma = {
-  propietarioMascota: {
-    findUnique: jest.fn(),
-  },
-  zonaSegura: {
-    findFirst: jest.fn(),
-    findUnique: jest.fn(),
-    update: jest.fn(),
-    delete: jest.fn(),
-  },
+  propietarioMascota: { findUnique: jest.fn() },
+  zonaMascota: { findFirst: jest.fn(), createMany: jest.fn() },
+  zonaSegura: { update: jest.fn(), delete: jest.fn() },
   $executeRaw: jest.fn().mockResolvedValue(1),
   $queryRaw: jest.fn(),
 };
@@ -63,12 +52,16 @@ describe('GeofencingService', () => {
   describe('createZone', () => {
     beforeEach(() => {
       mockPrisma.propietarioMascota.findUnique.mockResolvedValue(mockRelacion);
+      mockPrisma.zonaMascota.findFirst.mockResolvedValue(mockZonaMascotaRel);
+      mockPrisma.zonaMascota.createMany.mockResolvedValue({ count: 1 });
     });
 
-    it('inserta zona de tipo círculo con $executeRaw', async () => {
-      mockPrisma.zonaSegura.findFirst.mockResolvedValue(mockZona);
+    it('crea zona de tipo círculo, asocia la mascota y retorna el detalle', async () => {
+      mockPrisma.$queryRaw
+        .mockResolvedValueOnce([{ zona_id: ZONA_ID }]) // INSERT ... RETURNING zona_id
+        .mockResolvedValueOnce([mockZonaDetailRaw]); // findZone SELECT
 
-      await service.createZone(MASCOTA_ID, PERSONA_ID, {
+      const result = await service.createZone(MASCOTA_ID, PERSONA_ID, {
         nombreZona: 'Casa',
         tipo: 'circulo',
         lat: -17.78,
@@ -76,12 +69,17 @@ describe('GeofencingService', () => {
         radioMetros: 200,
       });
 
-      expect(mockPrisma.$executeRaw).toHaveBeenCalledTimes(1);
-      expect(mockPrisma.zonaSegura.findFirst).toHaveBeenCalled();
+      expect(mockPrisma.zonaMascota.createMany).toHaveBeenCalledWith({
+        data: [{ zonaId: ZONA_ID, mascotaId: MASCOTA_ID }],
+        skipDuplicates: true,
+      });
+      expect(result?.zona_id).toBe(ZONA_ID);
     });
 
-    it('inserta zona de tipo polígono con $executeRaw', async () => {
-      mockPrisma.zonaSegura.findFirst.mockResolvedValue(mockZona);
+    it('crea zona de tipo polígono y asocia la mascota', async () => {
+      mockPrisma.$queryRaw
+        .mockResolvedValueOnce([{ zona_id: ZONA_ID }])
+        .mockResolvedValueOnce([mockZonaDetailRaw]);
 
       await service.createZone(MASCOTA_ID, PERSONA_ID, {
         nombreZona: 'Parque',
@@ -93,7 +91,7 @@ describe('GeofencingService', () => {
         ],
       });
 
-      expect(mockPrisma.$executeRaw).toHaveBeenCalledTimes(1);
+      expect(mockPrisma.zonaMascota.createMany).toHaveBeenCalledTimes(1);
     });
 
     it('lanza ForbiddenException si el usuario no es propietario', async () => {
@@ -114,9 +112,9 @@ describe('GeofencingService', () => {
   // ───────────────────────── findZones ─────────────────────────
 
   describe('findZones', () => {
-    it('retorna zonas del mapa con coordenadas extraídas por PostGIS', async () => {
+    it('retorna zonas con coordenadas extraídas por PostGIS', async () => {
       mockPrisma.propietarioMascota.findUnique.mockResolvedValue(mockRelacion);
-      mockPrisma.$queryRaw.mockResolvedValue([mockZonaRaw]);
+      mockPrisma.$queryRaw.mockResolvedValue([mockZonaDetailRaw]);
 
       const result = await service.findZones(MASCOTA_ID, PERSONA_ID);
 
@@ -129,45 +127,44 @@ describe('GeofencingService', () => {
 
   describe('findZone', () => {
     it('retorna detalle de la zona con geometría', async () => {
-      mockPrisma.propietarioMascota.findUnique.mockResolvedValue(mockRelacion);
-      mockPrisma.$queryRaw.mockResolvedValue([mockZonaRaw]);
+      mockPrisma.zonaMascota.findFirst.mockResolvedValue(mockZonaMascotaRel);
+      mockPrisma.$queryRaw.mockResolvedValue([mockZonaDetailRaw]);
 
-      const result = await service.findZone(MASCOTA_ID, ZONA_ID, PERSONA_ID);
+      const result = await service.findZone(ZONA_ID, PERSONA_ID);
 
       expect(result.zona_id).toBe(ZONA_ID);
       expect(result.geometria_geojson).toBeNull();
     });
 
     it('lanza NotFoundException si la zona no existe', async () => {
-      mockPrisma.propietarioMascota.findUnique.mockResolvedValue(mockRelacion);
+      mockPrisma.zonaMascota.findFirst.mockResolvedValue(mockZonaMascotaRel);
       mockPrisma.$queryRaw.mockResolvedValue([]);
 
-      await expect(service.findZone(MASCOTA_ID, 99, PERSONA_ID)).rejects.toThrow(NotFoundException);
+      await expect(service.findZone(99, PERSONA_ID)).rejects.toThrow(NotFoundException);
     });
   });
 
   // ───────────────────────── updateZone ────────────────────────
 
   describe('updateZone', () => {
+    beforeEach(() => {
+      mockPrisma.zonaMascota.findFirst.mockResolvedValue(mockZonaMascotaRel);
+      mockPrisma.$queryRaw.mockResolvedValue([mockZonaDetailRaw]);
+    });
+
     it('actualiza el nombre de la zona', async () => {
-      mockPrisma.propietarioMascota.findUnique.mockResolvedValue(mockRelacion);
-      mockPrisma.zonaSegura.findFirst.mockResolvedValue(mockZona);
-      mockPrisma.zonaSegura.update.mockResolvedValue({ ...mockZona, nombreZona: 'Trabajo' });
-      mockPrisma.zonaSegura.findUnique.mockResolvedValue({ ...mockZona, nombreZona: 'Trabajo' });
+      mockPrisma.zonaSegura.update.mockResolvedValue({});
 
-      const result = await service.updateZone(MASCOTA_ID, ZONA_ID, PERSONA_ID, {
-        nombreZona: 'Trabajo',
+      await service.updateZone(ZONA_ID, PERSONA_ID, { nombreZona: 'Trabajo' });
+
+      expect(mockPrisma.zonaSegura.update).toHaveBeenCalledWith({
+        where: { zonaId: ZONA_ID },
+        data: { nombreZona: 'Trabajo' },
       });
-
-      expect(result?.nombreZona).toBe('Trabajo');
     });
 
     it('actualiza geometría de círculo con $executeRaw', async () => {
-      mockPrisma.propietarioMascota.findUnique.mockResolvedValue(mockRelacion);
-      mockPrisma.zonaSegura.findFirst.mockResolvedValue(mockZona);
-      mockPrisma.zonaSegura.findUnique.mockResolvedValue(mockZona);
-
-      await service.updateZone(MASCOTA_ID, ZONA_ID, PERSONA_ID, {
+      await service.updateZone(ZONA_ID, PERSONA_ID, {
         tipo: 'circulo',
         lat: -17.8,
         lng: -63.2,
@@ -177,13 +174,12 @@ describe('GeofencingService', () => {
       expect(mockPrisma.$executeRaw).toHaveBeenCalledTimes(1);
     });
 
-    it('lanza NotFoundException si la zona no existe', async () => {
-      mockPrisma.propietarioMascota.findUnique.mockResolvedValue(mockRelacion);
-      mockPrisma.zonaSegura.findFirst.mockResolvedValue(null);
+    it('lanza ForbiddenException si no tiene acceso a la zona', async () => {
+      mockPrisma.zonaMascota.findFirst.mockResolvedValue(null);
 
-      await expect(
-        service.updateZone(MASCOTA_ID, ZONA_ID, PERSONA_ID, { nombreZona: 'X' }),
-      ).rejects.toThrow(NotFoundException);
+      await expect(service.updateZone(ZONA_ID, PERSONA_ID, { nombreZona: 'X' })).rejects.toThrow(
+        ForbiddenException,
+      );
     });
   });
 
@@ -191,23 +187,19 @@ describe('GeofencingService', () => {
 
   describe('removeZone', () => {
     it('elimina la zona y retorna mensaje de confirmación', async () => {
-      mockPrisma.propietarioMascota.findUnique.mockResolvedValue(mockRelacion);
-      mockPrisma.zonaSegura.findFirst.mockResolvedValue(mockZona);
-      mockPrisma.zonaSegura.delete.mockResolvedValue(mockZona);
+      mockPrisma.zonaMascota.findFirst.mockResolvedValue(mockZonaMascotaRel);
+      mockPrisma.zonaSegura.delete.mockResolvedValue({});
 
-      const result = await service.removeZone(MASCOTA_ID, ZONA_ID, PERSONA_ID);
+      const result = await service.removeZone(ZONA_ID, PERSONA_ID);
 
       expect(result).toEqual({ message: 'Zona eliminada' });
       expect(mockPrisma.zonaSegura.delete).toHaveBeenCalledWith({ where: { zonaId: ZONA_ID } });
     });
 
-    it('lanza NotFoundException si la zona no existe', async () => {
-      mockPrisma.propietarioMascota.findUnique.mockResolvedValue(mockRelacion);
-      mockPrisma.zonaSegura.findFirst.mockResolvedValue(null);
+    it('lanza ForbiddenException si no tiene acceso a la zona', async () => {
+      mockPrisma.zonaMascota.findFirst.mockResolvedValue(null);
 
-      await expect(service.removeZone(MASCOTA_ID, ZONA_ID, PERSONA_ID)).rejects.toThrow(
-        NotFoundException,
-      );
+      await expect(service.removeZone(ZONA_ID, PERSONA_ID)).rejects.toThrow(ForbiddenException);
     });
   });
 });

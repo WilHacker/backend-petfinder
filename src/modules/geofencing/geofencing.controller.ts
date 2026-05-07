@@ -19,12 +19,17 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 @ApiTags('Geofencing')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
-@Controller('geofencing/pets/:petId/zones')
+@Controller('geofencing')
 export class GeofencingController {
   constructor(private readonly geofencingService: GeofencingService) {}
 
-  @Post()
-  @ApiOperation({ summary: 'Registrar zona segura en el mapa' })
+  @Post('pets/:petId/zones')
+  @ApiOperation({
+    summary: 'Crear zona segura y asociarla a una o más mascotas',
+    description:
+      'El :petId del URL es la mascota principal (debe ser tuya). ' +
+      'Puedes asociar mascotas adicionales con el campo mascotaIds en el body.',
+  })
   createZone(
     @Param('petId') mascotaId: string,
     @CurrentUser('personaId') personaId: string,
@@ -33,40 +38,34 @@ export class GeofencingController {
     return this.geofencingService.createZone(mascotaId, personaId, dto);
   }
 
-  @Get()
-  @ApiOperation({ summary: 'Listar zonas seguras de una mascota' })
+  @Get('pets/:petId/zones')
+  @ApiOperation({ summary: 'Listar zonas donde está registrada una mascota' })
   findZones(@Param('petId') mascotaId: string, @CurrentUser('personaId') personaId: string) {
     return this.geofencingService.findZones(mascotaId, personaId);
   }
 
-  @Get(':id')
+  @Get('zones/:id')
   @ApiOperation({ summary: 'Detalle de una zona segura' })
-  findZone(
-    @Param('petId') mascotaId: string,
-    @Param('id', ParseIntPipe) zonaId: number,
-    @CurrentUser('personaId') personaId: string,
-  ) {
-    return this.geofencingService.findZone(mascotaId, zonaId, personaId);
+  findZone(@Param('id', ParseIntPipe) zonaId: number, @CurrentUser('personaId') personaId: string) {
+    return this.geofencingService.findZone(zonaId, personaId);
   }
 
-  @Put(':id')
+  @Put('zones/:id')
   @ApiOperation({ summary: 'Actualizar zona segura' })
   updateZone(
-    @Param('petId') mascotaId: string,
     @Param('id', ParseIntPipe) zonaId: number,
     @CurrentUser('personaId') personaId: string,
     @Body() dto: UpdateZoneDto,
   ) {
-    return this.geofencingService.updateZone(mascotaId, zonaId, personaId, dto);
+    return this.geofencingService.updateZone(zonaId, personaId, dto);
   }
 
-  @Delete(':id')
+  @Delete('zones/:id')
   @ApiOperation({ summary: 'Eliminar zona segura' })
   removeZone(
-    @Param('petId') mascotaId: string,
     @Param('id', ParseIntPipe) zonaId: number,
     @CurrentUser('personaId') personaId: string,
   ) {
-    return this.geofencingService.removeZone(mascotaId, zonaId, personaId);
+    return this.geofencingService.removeZone(zonaId, personaId);
   }
 }

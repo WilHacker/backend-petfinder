@@ -114,7 +114,7 @@ model Mascota {
   colorPrimario           String?       @map("color_primario") @db.VarChar(50)
   rasgosParticulares      String?       @map("rasgos_particulares")
   estado                  EstadoMascota? @default(en_casa)
-  
+
   ultimaUbicacionConocida Unsupported("geometry(Point, 4326)")? @map("ultima_ubicacion_conocida")
   fechaUltimaUbicacion    DateTime?     @map("fecha_ultima_ubicacion") @db.Timestamptz
   creadoEl                DateTime?     @default(now()) @map("creado_el") @db.Timestamptz
@@ -125,7 +125,7 @@ model Mascota {
   fichaMedica         FichaMedica?
   fotos               FotoMascota[]
   placaQr             PlacaQr?
-  zonasSeguras        ZonaSegura[]
+  zonasSeguras        ZonaMascota[]
   registroVisitas     RegistroVisitaZona[]
   reportesExtravio    ReporteExtravio[]
   avistamientos       Avistamiento[]
@@ -191,19 +191,29 @@ model PlacaQr {
 
 model ZonaSegura {
   zonaId       Int     @id @default(autoincrement()) @map("zona_id")
-  mascotaId    String? @map("mascota_id") @db.Uuid
   nombreZona   String? @map("nombre_zona") @db.VarChar(100)
-  
+
   geometria    Unsupported("geometry(Polygon, 4326)")?
   puntoCentral Unsupported("geometry(Point, 4326)")? @map("punto_central")
-  
-  radioMetros  Float?  @map("radio_metros")
+
+  radioMetros  Float?   @map("radio_metros")
   estaActiva   Boolean? @default(true) @map("esta_activa")
 
-  mascota Mascota? @relation(fields: [mascotaId], references: [mascotaId], onDelete: Cascade)
-  visitas RegistroVisitaZona[]
+  mascotasZona ZonaMascota[]
+  visitas      RegistroVisitaZona[]
 
   @@map("zonas_seguras")
+}
+
+model ZonaMascota {
+  zonaId    Int    @map("zona_id")
+  mascotaId String @map("mascota_id") @db.Uuid
+
+  zona    ZonaSegura @relation(fields: [zonaId],    references: [zonaId],    onDelete: Cascade)
+  mascota Mascota    @relation(fields: [mascotaId], references: [mascotaId], onDelete: Cascade)
+
+  @@id([zonaId, mascotaId])
+  @@map("zona_mascotas")
 }
 
 model HistorialUbicacion {

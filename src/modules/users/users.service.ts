@@ -127,6 +127,50 @@ export class UsersService {
     return { message: 'Ubicación actualizada' };
   }
 
+  async findUserCard(personaId: string) {
+    const persona = await this.prisma.persona.findUnique({
+      where: { personaId },
+      select: {
+        personaId: true,
+        nombre: true,
+        apellidoPaterno: true,
+        apellidoMaterno: true,
+        fotoPerfilUrl: true,
+        mediosContacto: { select: { tipo: true, valor: true } },
+        mascotasPropietario: {
+          select: {
+            mascota: {
+              select: {
+                mascotaId: true,
+                nombre: true,
+                tipoMascota: { select: { nombre: true } },
+                fotos: {
+                  where: { esPrincipal: true },
+                  take: 1,
+                  select: { fotoUrl: true },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    if (!persona) throw new NotFoundException('Usuario no encontrado');
+
+    return {
+      personaId: persona.personaId,
+      nombreCompleto: `${persona.nombre} ${persona.apellidoPaterno}`.trim(),
+      fotoPerfilUrl: persona.fotoPerfilUrl,
+      contactos: persona.mediosContacto.map((c) => ({ tipo: c.tipo, valor: c.valor })),
+      mascotas: persona.mascotasPropietario.map((pm) => ({
+        mascotaId: pm.mascota.mascotaId,
+        nombre: pm.mascota.nombre,
+        tipo: pm.mascota.tipoMascota?.nombre ?? null,
+        fotoPrincipalUrl: pm.mascota.fotos[0]?.fotoUrl ?? null,
+      })),
+    };
+  }
+
   async findUsersOnMap(opts: { lat?: number; lng?: number; radio?: number } = {}) {
     type Row = {
       usuario_id: string;

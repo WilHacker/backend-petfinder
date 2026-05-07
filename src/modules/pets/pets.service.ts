@@ -214,6 +214,65 @@ export class PetsService {
     });
   }
 
+  async findPetCard(mascotaId: string) {
+    const mascota = await this.prisma.mascota.findUnique({
+      where: { mascotaId },
+      select: {
+        mascotaId: true,
+        nombre: true,
+        sexo: true,
+        colorPrimario: true,
+        rasgosParticulares: true,
+        estado: true,
+        tipoMascota: { select: { nombre: true } },
+        fotos: {
+          select: { fotoId: true, fotoUrl: true, esPrincipal: true },
+          orderBy: [{ esPrincipal: 'desc' }, { fotoId: 'asc' }],
+        },
+        propietarios: {
+          select: {
+            tipoRelacion: true,
+            mostrarEnQr: true,
+            persona: {
+              select: {
+                personaId: true,
+                nombre: true,
+                apellidoPaterno: true,
+                fotoPerfilUrl: true,
+                mediosContacto: { select: { tipo: true, valor: true } },
+              },
+            },
+          },
+        },
+      },
+    });
+    if (!mascota) throw new NotFoundException('Mascota no encontrada');
+
+    return {
+      mascotaId: mascota.mascotaId,
+      nombre: mascota.nombre,
+      tipo: mascota.tipoMascota?.nombre ?? null,
+      sexo: mascota.sexo,
+      colorPrimario: mascota.colorPrimario,
+      rasgosParticulares: mascota.rasgosParticulares,
+      estado: mascota.estado,
+      fotos: mascota.fotos.map((f) => ({
+        fotoId: f.fotoId,
+        url: f.fotoUrl,
+        esPrincipal: f.esPrincipal ?? false,
+      })),
+      propietarios: mascota.propietarios
+        .filter((p) => p.mostrarEnQr !== false)
+        .map((p) => ({
+          personaId: p.persona.personaId,
+          nombreCompleto: `${p.persona.nombre} ${p.persona.apellidoPaterno}`.trim(),
+          fotoPerfilUrl: p.persona.fotoPerfilUrl,
+          tipoRelacion: p.tipoRelacion,
+          contactos: p.persona.mediosContacto.map((c) => ({ tipo: c.tipo, valor: c.valor })),
+        })),
+    };
+  }
+
   async findPetsOnMap(personaId: string) {
     return this.prisma.$queryRaw<
       Array<{

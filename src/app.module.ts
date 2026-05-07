@@ -10,6 +10,7 @@ import { UsersModule } from './modules/users/users.module';
 import { PetsModule } from './modules/pets/pets.module';
 import { GeofencingModule } from './modules/geofencing/geofencing.module';
 import { TiposMascotaModule } from './modules/tipos-mascota/tipos-mascota.module';
+import { MapModule } from './modules/map/map.module';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { TiposMascotaModule } from './modules/tipos-mascota/tipos-mascota.module
     PetsModule,
     GeofencingModule,
     TiposMascotaModule,
+    MapModule,
   ],
   controllers: [AppController],
   providers: [AppService],
