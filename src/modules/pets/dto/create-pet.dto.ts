@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsIn, IsInt, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { Type } from 'class-transformer';
+import { IsIn, IsInt, IsNotEmpty, IsOptional, IsString, Min } from 'class-validator';
 
 export class CreatePetDto {
   @ApiProperty({ example: 'Firulais' })
@@ -9,6 +10,7 @@ export class CreatePetDto {
 
   @ApiPropertyOptional({ example: 1, description: 'ID de la raza' })
   @IsOptional()
+  @Type(() => Number)
   @IsInt()
   razaId?: number;
 
@@ -27,4 +29,14 @@ export class CreatePetDto {
   @IsOptional()
   @IsString()
   rasgosParticulares?: string;
+
+  @ApiPropertyOptional({
+    example: 0,
+    description: 'Índice 0-based de la foto principal (multipart)',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  fotoPrincipalIndex?: number;
 }

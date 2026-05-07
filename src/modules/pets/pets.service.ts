@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { randomUUID } from 'crypto';
 import * as QRCode from 'qrcode';
 import { CloudinaryService } from '../../cloudinary/cloudinary.service';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -42,10 +43,12 @@ export class PetsService {
     const oversized = files.find((f) => f.size > MAX_FILE_SIZE);
     if (oversized) throw new BadRequestException('Cada imagen debe pesar menos de 5 MB');
 
-    // 1. Crear mascota + placa QR en transacción
-    const { mascota, placa } = await this.prisma.$transaction(async (tx) => {
-      const mascota = await tx.mascota.create({
+    // 1. Crear mascota + placa QR en transacción (batch — compatible con driver adapters de Prisma 7)
+    const mascotaId = randomUUID();
+    const [mascota, placa] = await this.prisma.$transaction([
+      this.prisma.mascota.create({
         data: {
+          mascotaId,
           nombre: dto.nombre,
           razaId: dto.razaId,
           sexo: dto.sexo,
@@ -60,27 +63,24 @@ export class PetsService {
             },
           },
         },
-        include: { placaQr: true, propietarios: true },
-      });
-
-      const placa = await tx.placaQr.create({
-        data: { mascotaId: mascota.mascotaId },
-      });
-
-      return { mascota, placa };
-    });
+        include: { propietarios: true },
+      }),
+      this.prisma.placaQr.create({
+        data: { mascotaId },
+      }),
+    ]);
 
     // 2. Subir fotos a Cloudinary e insertar en BD (fuera de la transacción de BD)
     let fotos: { fotoId: number; fotoUrl: string; esPrincipal: boolean | null }[] = [];
     if (files.length > 0) {
       const uploads = await Promise.all(
-        files.map((f) => this.cloudinary.uploadBuffer(f.buffer, `mascotas/${mascota.mascotaId}`)),
+        files.map((f) => this.cloudinary.uploadBuffer(f.buffer, `mascotas/${mascotaId}`)),
       );
       fotos = await this.prisma.$transaction(
         uploads.map((upload, i) =>
           this.prisma.fotoMascota.create({
             data: {
-              mascotaId: mascota.mascotaId,
+              mascotaId,
               fotoUrl: upload.secure_url,
               esPrincipal: i === fotoPrincipalIndex,
             },

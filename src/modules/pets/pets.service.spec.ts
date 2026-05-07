@@ -107,16 +107,11 @@ describe('PetsService', () => {
     const txMascota = { ...mockMascota, propietarios: [], placaQr: null };
 
     beforeEach(() => {
-      mockPrisma.$transaction.mockImplementation(async (opsOrCb: unknown) => {
-        if (typeof opsOrCb === 'function') {
-          return (opsOrCb as (tx: typeof mockPrisma) => Promise<unknown>)({
-            ...mockPrisma,
-            mascota: { ...mockPrisma.mascota, create: jest.fn().mockResolvedValue(txMascota) },
-            placaQr: { create: jest.fn().mockResolvedValue(mockPlaca) },
-          });
-        }
-        return Promise.all(opsOrCb as Promise<unknown>[]);
-      });
+      mockPrisma.mascota.create.mockResolvedValue(txMascota);
+      mockPrisma.placaQr.create.mockResolvedValue(mockPlaca);
+      mockPrisma.$transaction.mockImplementation((ops: unknown) =>
+        Array.isArray(ops) ? Promise.all(ops as Promise<unknown>[]) : (ops as () => unknown)(),
+      );
     });
 
     it('crea mascota y placa QR sin fotos', async () => {

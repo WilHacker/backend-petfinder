@@ -71,10 +71,8 @@ export class PetsController {
     @CurrentUser('personaId') personaId: string,
     @Body() dto: CreatePetDto,
     @UploadedFiles() files?: Express.Multer.File[],
-    @Body('fotoPrincipalIndex') principalIndexStr?: string,
   ) {
-    const principalIndex = principalIndexStr !== undefined ? parseInt(principalIndexStr, 10) : 0;
-    return this.petsService.create(personaId, dto, files ?? [], principalIndex);
+    return this.petsService.create(personaId, dto, files ?? [], dto.fotoPrincipalIndex ?? 0);
   }
 
   @Get()
