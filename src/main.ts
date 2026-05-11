@@ -62,9 +62,9 @@ async function bootstrap() {
   const port = process.env.PORT || 3000;
   await app.listen(port);
 
-  // Imprimimos las rutas en la consola
   logger.log(`🚀 El servidor de PetFinder está corriendo en: http://localhost:${port}`);
   logger.log(`📄 Documentación Swagger disponible en: http://localhost:${port}/api/docs`);
+  logger.log(`🔌 WebSocket activo en: ws://localhost:${port}/realtime`);
 }
 
 void bootstrap().catch((err) => {
