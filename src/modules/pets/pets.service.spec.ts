@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
 import { RelacionPropietario } from '@prisma/client';
 import { CloudinaryService } from '../../cloudinary/cloudinary.service';
+import { RealtimeService } from '../../infrastructure/realtime/realtime.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PetsService } from './pets.service';
 
@@ -41,6 +42,15 @@ const mockMascota = {
   tipoMascota: null,
 };
 
+// Mascota con un co-propietario adicional (para tests de removeOwner)
+const mockMascotaConCopropietario = {
+  ...mockMascota,
+  propietarios: [
+    { personaId: PERSONA_ID, tipoRelacion: RelacionPropietario.Dueno_Principal },
+    { personaId: 'coprop-uuid', tipoRelacion: RelacionPropietario.Cuidador },
+  ],
+};
+
 const mockPrisma = {
   mascota: {
     create: jest.fn(),
@@ -48,6 +58,9 @@ const mockPrisma = {
     findMany: jest.fn(),
     update: jest.fn(),
     delete: jest.fn(),
+  },
+  persona: {
+    findUnique: jest.fn(),
   },
   propietarioMascota: {
     create: jest.fn(),
@@ -62,8 +75,16 @@ const mockPrisma = {
     deleteMany: jest.fn(),
     delete: jest.fn(),
   },
+  reporteExtravio: {
+    findFirst: jest.fn(),
+    updateMany: jest.fn(),
+  },
+  usuario: {
+    findUnique: jest.fn(),
+  },
   $transaction: jest.fn(),
   $queryRaw: jest.fn(),
+  $executeRaw: jest.fn().mockResolvedValue(1),
 };
 
 const mockConfig = {
@@ -79,6 +100,12 @@ const mockCloudinary = {
   deleteByUrl: jest.fn().mockResolvedValue(undefined),
 };
 
+const mockRealtime = {
+  emitPetRegistered: jest.fn(),
+  emitPetStatusChanged: jest.fn(),
+  emitOwnerAdded: jest.fn(),
+};
+
 describe('PetsService', () => {
   let service: PetsService;
 
@@ -91,6 +118,7 @@ describe('PetsService', () => {
         { provide: PrismaService, useValue: mockPrisma },
         { provide: ConfigService, useValue: mockConfig },
         { provide: CloudinaryService, useValue: mockCloudinary },
+        { provide: RealtimeService, useValue: mockRealtime },
       ],
     }).compile();
 
@@ -109,6 +137,7 @@ describe('PetsService', () => {
     beforeEach(() => {
       mockPrisma.mascota.create.mockResolvedValue(txMascota);
       mockPrisma.placaQr.create.mockResolvedValue(mockPlaca);
+      mockPrisma.usuario.findUnique.mockResolvedValue(null);
       mockPrisma.$transaction.mockImplementation((ops: unknown) =>
         Array.isArray(ops) ? Promise.all(ops as Promise<unknown>[]) : (ops as () => unknown)(),
       );
@@ -288,33 +317,73 @@ describe('PetsService', () => {
   // ───────────────────────── addOwner ──────────────────────────
 
   describe('addOwner', () => {
-    it('agrega un co-propietario a la mascota', async () => {
-      const nuevoPropietario = { personaId: 'otro-uuid', mascotaId: MASCOTA_ID };
+    const mockNuevaRelacion = {
+      personaId: 'coprop-uuid',
+      mascotaId: MASCOTA_ID,
+      tipoRelacion: RelacionPropietario.Cuidador,
+      persona: { nombre: 'Ana', apellidoPaterno: 'García' },
+    };
+
+    beforeEach(() => {
       mockPrisma.mascota.findUnique.mockResolvedValue(mockMascota);
-      mockPrisma.propietarioMascota.create.mockResolvedValue(nuevoPropietario);
+      mockPrisma.persona.findUnique.mockResolvedValue({ personaId: 'coprop-uuid' });
+      mockPrisma.usuario.findUnique.mockResolvedValue(null);
+      mockPrisma.propietarioMascota.create.mockResolvedValue(mockNuevaRelacion);
+    });
 
-      const result = await service.addOwner(MASCOTA_ID, PERSONA_ID, {
-        personaId: 'otro-uuid',
-      });
+    it('agrega un co-propietario a la mascota', async () => {
+      const result = await service.addOwner(MASCOTA_ID, PERSONA_ID, { personaId: 'coprop-uuid' });
 
-      expect(result.personaId).toBe('otro-uuid');
+      expect(result.personaId).toBe('coprop-uuid');
+      expect(mockPrisma.propietarioMascota.create).toHaveBeenCalledTimes(1);
+      expect(mockRealtime.emitOwnerAdded).toHaveBeenCalledTimes(1);
+    });
+
+    it('lanza NotFoundException si la persona indicada no existe', async () => {
+      mockPrisma.persona.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.addOwner(MASCOTA_ID, PERSONA_ID, { personaId: 'no-existe' }),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('lanza BadRequestException si la persona ya es propietaria', async () => {
+      await expect(
+        service.addOwner(MASCOTA_ID, PERSONA_ID, { personaId: PERSONA_ID }),
+      ).rejects.toThrow(BadRequestException);
     });
   });
 
   // ───────────────────────── removeOwner ───────────────────────
 
   describe('removeOwner', () => {
-    it('elimina el co-propietario indicado', async () => {
-      mockPrisma.mascota.findUnique.mockResolvedValue(mockMascota);
+    it('elimina el co-propietario (no-principal) indicado', async () => {
+      mockPrisma.mascota.findUnique.mockResolvedValue(mockMascotaConCopropietario);
       mockPrisma.propietarioMascota.delete.mockResolvedValue({});
 
-      await service.removeOwner(MASCOTA_ID, PERSONA_ID, 'otro-uuid');
+      await service.removeOwner(MASCOTA_ID, PERSONA_ID, 'coprop-uuid');
 
       expect(mockPrisma.propietarioMascota.delete).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { personaId_mascotaId: { personaId: 'otro-uuid', mascotaId: MASCOTA_ID } },
+          where: { personaId_mascotaId: { personaId: 'coprop-uuid', mascotaId: MASCOTA_ID } },
         }),
       );
+    });
+
+    it('lanza ForbiddenException si se intenta eliminar al Dueno_Principal', async () => {
+      mockPrisma.mascota.findUnique.mockResolvedValue(mockMascotaConCopropietario);
+
+      await expect(
+        service.removeOwner(MASCOTA_ID, PERSONA_ID, PERSONA_ID),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('lanza NotFoundException si el propietario indicado no está en la lista', async () => {
+      mockPrisma.mascota.findUnique.mockResolvedValue(mockMascota);
+
+      await expect(
+        service.removeOwner(MASCOTA_ID, PERSONA_ID, 'no-existe-uuid'),
+      ).rejects.toThrow(NotFoundException);
     });
   });
 

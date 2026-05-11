@@ -1,6 +1,7 @@
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { TipoContacto } from '@prisma/client';
+import { RealtimeService } from '../../infrastructure/realtime/realtime.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UsersService } from './users.service';
 
@@ -29,14 +30,25 @@ const mockPrisma = {
   },
   persona: {
     update: jest.fn(),
+    findUnique: jest.fn(),
   },
   medioContacto: {
     create: jest.fn(),
     findUnique: jest.fn(),
     delete: jest.fn(),
   },
+  propietarioMascota: {
+    findMany: jest.fn().mockResolvedValue([]),
+  },
   $executeRaw: jest.fn().mockResolvedValue(1),
-  $queryRaw: jest.fn(),
+  $queryRaw: jest.fn().mockResolvedValue([]),
+};
+
+const mockRealtime = {
+  emitOwnerLocationUpdated: jest.fn(),
+  emitPetLocationUpdated: jest.fn(),
+  emitPetEnteredZone: jest.fn(),
+  emitPetExitedZone: jest.fn(),
 };
 
 describe('UsersService', () => {
@@ -44,9 +56,15 @@ describe('UsersService', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    // Restaurar el valor por defecto del $queryRaw (retorna array vacío)
+    mockPrisma.$queryRaw.mockResolvedValue([]);
 
     const module: TestingModule = await Test.createTestingModule({
-      providers: [UsersService, { provide: PrismaService, useValue: mockPrisma }],
+      providers: [
+        UsersService,
+        { provide: PrismaService, useValue: mockPrisma },
+        { provide: RealtimeService, useValue: mockRealtime },
+      ],
     }).compile();
 
     service = module.get<UsersService>(UsersService);
@@ -185,16 +203,53 @@ describe('UsersService', () => {
   // ───────────────────────── updateLocation ────────────────────
 
   describe('updateLocation', () => {
-    it('ejecuta UPDATE usuario, INSERT historial y UPDATE mascotas en_paseo', async () => {
+    beforeEach(() => {
+      // $queryRaw se usa para: UPDATE mascotas RETURNING (→ []) y checkAndUpdateZones (→ [])
+      mockPrisma.$queryRaw.mockResolvedValue([]);
+      // usuario.findUnique devuelve personaId para el emit de owner location
+      mockPrisma.usuario.findUnique.mockResolvedValue({ personaId: 'persona-uuid' });
+      // propietarioMascota.findMany devuelve todas las mascotas del usuario (para petRooms)
+      mockPrisma.propietarioMascota.findMany.mockResolvedValue([]);
+    });
+
+    it('ejecuta UPDATE usuario e INSERT historial ($executeRaw x2)', async () => {
       await service.updateLocation('usuario-uuid', { lat: -17.78, lng: -63.18 });
 
-      expect(mockPrisma.$executeRaw).toHaveBeenCalledTimes(3);
+      expect(mockPrisma.$executeRaw).toHaveBeenCalledTimes(2);
     });
 
     it('retorna mensaje de confirmación', async () => {
       const result = await service.updateLocation('usuario-uuid', { lat: -17.78, lng: -63.18 });
 
       expect(result).toEqual({ message: 'Ubicación actualizada' });
+    });
+
+    it('emite owner:location-updated a los rooms de mascotas del usuario', async () => {
+      mockPrisma.propietarioMascota.findMany.mockResolvedValue([
+        { mascotaId: 'mascota-uuid-1' },
+        { mascotaId: 'mascota-uuid-2' },
+      ]);
+
+      await service.updateLocation('usuario-uuid', { lat: -17.78, lng: -63.18 });
+
+      expect(mockRealtime.emitOwnerLocationUpdated).toHaveBeenCalledWith(
+        ['pet:mascota-uuid-1', 'pet:mascota-uuid-2'],
+        expect.objectContaining({ lat: -17.78, lng: -63.18 }),
+      );
+    });
+
+    it('emite pet:location-updated y hace check de zonas por cada mascota en paseo', async () => {
+      mockPrisma.$queryRaw
+        .mockResolvedValueOnce([
+          { mascota_id: 'mascota-en-paseo', nombre: 'Rex', estado: 'en_paseo' },
+        ]) // UPDATE mascotas RETURNING
+        .mockResolvedValueOnce([]); // checkAndUpdateZones SELECT zonas
+
+      await service.updateLocation('usuario-uuid', { lat: -17.78, lng: -63.18 });
+
+      expect(mockRealtime.emitPetLocationUpdated).toHaveBeenCalledWith(
+        expect.objectContaining({ mascotaId: 'mascota-en-paseo' }),
+      );
     });
   });
 

@@ -1,12 +1,20 @@
 import { NestFactory } from '@nestjs/core';
-import { Logger, ValidationPipe } from '@nestjs/common';
+import { BadRequestException, Logger, ValidationPipe } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
+import { IoAdapter } from '@nestjs/platform-socket.io';
+import { ValidationError } from 'class-validator';
 import { AppModule } from './app.module';
+import { PrismaExceptionFilter } from './common/filters/prisma-exception.filter';
 import helmet from 'helmet';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const logger = new Logger('Bootstrap');
+
+  app.useWebSocketAdapter(new IoAdapter(app));
+
+  // Captura errores de Prisma antes de que lleguen como 500 al cliente
+  app.useGlobalFilters(new PrismaExceptionFilter());
 
   app.enableCors();
   app.use(helmet());
@@ -16,6 +24,27 @@ async function bootstrap() {
       whitelist: true,
       forbidNonWhitelisted: true,
       transform: true,
+      exceptionFactory: (errors: ValidationError[]) => {
+        const formatErrors = (
+          errs: ValidationError[],
+          parentPath = '',
+        ): Record<string, string[]> => {
+          const result: Record<string, string[]> = {};
+          for (const err of errs) {
+            const path = parentPath ? `${parentPath}.${err.property}` : err.property;
+            if (err.constraints) result[path] = Object.values(err.constraints);
+            if (err.children?.length) Object.assign(result, formatErrors(err.children, path));
+          }
+          return result;
+        };
+
+        return new BadRequestException({
+          statusCode: 400,
+          error: 'Bad Request',
+          message: 'Error de validación',
+          errores: formatErrors(errors),
+        });
+      },
     }),
   );
 

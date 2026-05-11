@@ -17,6 +17,7 @@ import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOperation, ApiTags } from '@nes
 import { memoryStorage } from 'multer';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { Public } from '../../common/decorators/public.decorator';
 import { AddOwnerDto } from './dto/add-owner.dto';
 import { CreatePetDto } from './dto/create-pet.dto';
 import { UpdatePetDto } from './dto/update-pet.dto';
@@ -83,9 +84,25 @@ export class PetsController {
   }
 
   @Get('map')
-  @ApiOperation({ summary: 'Ver mis mascotas en el mapa' })
+  @ApiOperation({
+    summary: 'Ver mis mascotas en el mapa (#31)',
+    description:
+      'Devuelve TODAS las mascotas del dueño autenticado. ' +
+      'Las que aún no tienen GPS vienen con lat/lng null — el frontend las muestra sin marcador de posición.',
+  })
   getPetsOnMap(@CurrentUser('personaId') personaId: string) {
     return this.petsService.findPetsOnMap(personaId);
+  }
+
+  @Get(':id/owners-map')
+  @ApiOperation({
+    summary: 'Ver propietarios de una mascota en el mapa (#32)',
+    description:
+      'Devuelve todos los dueños y cuidadores de la mascota con su última ubicación GPS conocida. ' +
+      'Los que no han compartido ubicación vienen con lat/lng null.',
+  })
+  getPetOwnersOnMap(@Param('id') mascotaId: string, @CurrentUser('personaId') personaId: string) {
+    return this.petsService.findPetOwnersOnMap(mascotaId, personaId);
   }
 
   @Put(':id/status')
@@ -94,7 +111,8 @@ export class PetsController {
     description:
       'Valores: en_casa | en_paseo | extraviada | recuperada. ' +
       'Cuando el estado cambia a en_paseo, las siguientes actualizaciones de ' +
-      'ubicación del dueño propagan automáticamente las coordenadas a la mascota.',
+      'ubicación del dueño propagan automáticamente las coordenadas a la mascota. ' +
+      'Emite evento WebSocket pet:status-changed a todos los co-propietarios.',
   })
   updateStatus(
     @Param('id') mascotaId: string,
@@ -105,11 +123,12 @@ export class PetsController {
   }
 
   @Get(':id/card')
+  @Public()
   @ApiOperation({
-    summary: 'Tarjeta de detalle de una mascota (popup del mapa)',
+    summary: 'Tarjeta de detalle de una mascota (popup del mapa / escaneo QR)',
     description:
       'Devuelve el perfil completo de la mascota con todas sus fotos y la lista de ' +
-      'propietarios con sus medios de contacto. Accesible para cualquier usuario autenticado.',
+      'propietarios con sus medios de contacto. Acceso público — no requiere token.',
   })
   getPetCard(@Param('id') mascotaId: string) {
     return this.petsService.findPetCard(mascotaId);

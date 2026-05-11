@@ -44,8 +44,14 @@ export class GeofencingService {
       zonaId = row.zona_id;
     }
 
+    // Verificar que el usuario también sea dueño de las mascotas adicionales
+    const extraIds = (dto.mascotaIds ?? []).filter((id) => id !== primaryMascotaId);
+    for (const id of extraIds) {
+      await this.checkPetOwnership(id, personaId);
+    }
+
     // Asociar mascotas a la zona (el petId del URL + extras del DTO, sin duplicados)
-    const allIds = [...new Set([primaryMascotaId, ...(dto.mascotaIds ?? [])])];
+    const allIds = [...new Set([primaryMascotaId, ...extraIds])];
     await this.prisma.zonaMascota.createMany({
       data: allIds.map((mascotaId) => ({ zonaId, mascotaId })),
       skipDuplicates: true,

@@ -94,7 +94,7 @@ describe('GeofencingService', () => {
       expect(mockPrisma.zonaMascota.createMany).toHaveBeenCalledTimes(1);
     });
 
-    it('lanza ForbiddenException si el usuario no es propietario', async () => {
+    it('lanza ForbiddenException si el usuario no es propietario de la mascota principal', async () => {
       mockPrisma.propietarioMascota.findUnique.mockResolvedValue(null);
 
       await expect(
@@ -104,6 +104,26 @@ describe('GeofencingService', () => {
           lat: 0,
           lng: 0,
           radioMetros: 50,
+        }),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('lanza ForbiddenException si mascotaIds contiene una mascota ajena al usuario', async () => {
+      // Primera llamada: mascota principal → propietario ✓
+      // Segunda llamada: mascota extra → no propietario ✗
+      mockPrisma.propietarioMascota.findUnique
+        .mockResolvedValueOnce(mockRelacion)
+        .mockResolvedValueOnce(null);
+      mockPrisma.$queryRaw.mockResolvedValueOnce([{ zona_id: ZONA_ID }]);
+
+      await expect(
+        service.createZone(MASCOTA_ID, PERSONA_ID, {
+          nombreZona: 'Casa',
+          tipo: 'circulo',
+          lat: -17.78,
+          lng: -63.18,
+          radioMetros: 200,
+          mascotaIds: ['mascota-ajena-uuid'],
         }),
       ).rejects.toThrow(ForbiddenException);
     });

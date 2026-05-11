@@ -1,11 +1,15 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsIn } from 'class-validator';
+import { IsEnum } from 'class-validator';
+import { EstadoMascota } from '@prisma/client';
 
 export class UpdatePetStatusDto {
   @ApiProperty({
-    enum: ['en_casa', 'en_paseo', 'extraviada', 'recuperada'],
-    example: 'en_paseo',
+    enum: EstadoMascota,
+    example: EstadoMascota.en_paseo,
+    description: 'en_casa | en_paseo | extraviada | recuperada',
   })
-  @IsIn(['en_casa', 'en_paseo', 'extraviada', 'recuperada'])
-  estado!: string;
+  @IsEnum(EstadoMascota, {
+    message: 'El estado debe ser uno de: en_casa, en_paseo, extraviada, recuperada',
+  })
+  estado!: EstadoMascota;
 }

@@ -1,6 +1,17 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 
+type PublicLostPetRow = {
+  reporte_id: number;
+  mascota_id: string;
+  nombre: string;
+  tipo_nombre: string;
+  foto_principal_url: string | null;
+  lat: number;
+  lng: number;
+  fecha_perdida: Date;
+};
+
 type CoOwnerRow = {
   persona_id: string;
   nombre: string;
@@ -167,5 +178,41 @@ export class MapService {
         };
       }),
     };
+  }
+
+  // Endpoint público — no requiere autenticación
+  async getPublicLostPets() {
+    const rows = await this.prisma.$queryRaw<PublicLostPetRow[]>`
+      SELECT
+        r.reporte_id,
+        r.mascota_id::text,
+        m.nombre,
+        COALESCE(tm.nombre, 'Sin tipo') AS tipo_nombre,
+        (SELECT f.foto_url FROM fotos_mascota f
+         WHERE f.mascota_id = m.mascota_id
+         ORDER BY f.es_principal DESC, f.foto_id ASC
+         LIMIT 1) AS foto_principal_url,
+        ST_Y(r.ultima_ubicacion_conocida::geometry) AS lat,
+        ST_X(r.ultima_ubicacion_conocida::geometry) AS lng,
+        r.fecha_perdida
+      FROM reportes_extravio r
+      JOIN mascotas m        ON m.mascota_id = r.mascota_id
+      LEFT JOIN tipos_mascota tm ON tm.tipo_id = m.tipo_id
+      WHERE r.estado_reporte              = 'abierto'
+        AND r.ultima_ubicacion_conocida IS NOT NULL
+      ORDER BY r.fecha_perdida DESC
+      LIMIT 100
+    `;
+
+    return rows.map((r) => ({
+      reporteId: Number(r.reporte_id),
+      mascotaId: r.mascota_id,
+      nombre: r.nombre,
+      tipo: r.tipo_nombre,
+      fotoUrl: r.foto_principal_url,
+      lat: Number(r.lat),
+      lng: Number(r.lng),
+      fechaPerdida: r.fecha_perdida,
+    }));
   }
 }

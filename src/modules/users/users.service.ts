@@ -1,12 +1,23 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { RealtimeService } from '../../infrastructure/realtime/realtime.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { AddContactDto } from './dto/add-contact.dto';
 import { UpdateLocationDto } from './dto/update-location.dto';
 
+type ZoneCheckRow = {
+  zona_id: number;
+  esta_dentro: boolean;
+  visita_id: bigint | null;
+  fecha_hora_entrada: Date | null;
+};
+
 @Injectable()
 export class UsersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly realtime: RealtimeService,
+  ) {}
 
   async findMe(usuarioId: string) {
     const usuario = await this.prisma.usuario.findUnique({
@@ -108,6 +119,9 @@ export class UsersService {
   }
 
   async updateLocation(usuarioId: string, dto: UpdateLocationDto) {
+    const now = new Date();
+
+    // 1. Actualiza ubicación del usuario e historial
     await this.prisma.$executeRaw`
       UPDATE usuarios
       SET
@@ -124,8 +138,10 @@ export class UsersService {
       )
     `;
 
-    // Propaga la ubicación a las mascotas en_paseo del dueño
-    await this.prisma.$executeRaw`
+    // 2. Propaga la ubicación a mascotas en_paseo y obtiene sus IDs para WS
+    const mascotasActualizadas = await this.prisma.$queryRaw<
+      Array<{ mascota_id: string; nombre: string; estado: string }>
+    >`
       UPDATE mascotas m
       SET
         ultima_ubicacion_conocida = ST_SetSRID(ST_MakePoint(${dto.lng}, ${dto.lat}), 4326),
@@ -135,9 +151,113 @@ export class UsersService {
       WHERE pm.mascota_id = m.mascota_id
         AND u.usuario_id  = ${usuarioId}::uuid
         AND m.estado       = 'en_paseo'::estado_mascota
+      RETURNING m.mascota_id, m.nombre, m.estado::text
     `;
 
+    // 3. Obtiene personaId del usuario para emitir owner:location-updated
+    const usuario = await this.prisma.usuario.findUnique({
+      where: { usuarioId },
+      select: { personaId: true },
+    });
+
+    // 4. Todas las mascotas del usuario (para los rooms de co-propietarios)
+    const todasLasRelaciones = await this.prisma.propietarioMascota.findMany({
+      where: { personaId: usuario!.personaId },
+      select: { mascotaId: true },
+    });
+    const petRooms = todasLasRelaciones.map((r) => `pet:${r.mascotaId}`);
+
+    // 5. Emite ubicación del dueño a co-propietarios (#32 en tiempo real)
+    this.realtime.emitOwnerLocationUpdated(petRooms, {
+      personaId: usuario!.personaId,
+      usuarioId,
+      lat: dto.lat,
+      lng: dto.lng,
+      fechaActualizacion: now,
+    });
+
+    // 6. Emite ubicación de cada mascota actualizada + detecta entrada/salida de zona (en paralelo)
+    await Promise.all(
+      mascotasActualizadas.map((m) => {
+        this.realtime.emitPetLocationUpdated({
+          mascotaId: m.mascota_id,
+          lat: dto.lat,
+          lng: dto.lng,
+          estado: m.estado,
+          fechaActualizacion: now,
+        });
+        return this.checkAndUpdateZones(m.mascota_id, dto.lat, dto.lng, now);
+      }),
+    );
+
     return { message: 'Ubicación actualizada' };
+  }
+
+  private async checkAndUpdateZones(
+    mascotaId: string,
+    lat: number,
+    lng: number,
+    now: Date,
+  ): Promise<void> {
+    // Obtiene todas las zonas activas de la mascota y si el punto actual está dentro
+    const zonas = await this.prisma.$queryRaw<ZoneCheckRow[]>`
+      SELECT
+        z.zona_id,
+        CASE
+          WHEN z.radio_metros IS NOT NULL
+          THEN ST_DWithin(
+            ST_SetSRID(ST_MakePoint(${lng}, ${lat}), 4326)::geography,
+            z.punto_central::geography,
+            z.radio_metros
+          )
+          ELSE ST_Within(
+            ST_SetSRID(ST_MakePoint(${lng}, ${lat}), 4326),
+            z.geometria
+          )
+        END AS esta_dentro,
+        rv.visita_id,
+        rv.fecha_hora_entrada
+      FROM zonas_seguras z
+      JOIN zona_mascotas zm ON zm.zona_id = z.zona_id
+      LEFT JOIN registro_visitas_zonas rv
+        ON rv.zona_id    = z.zona_id
+       AND rv.mascota_id = zm.mascota_id
+       AND rv.fecha_hora_salida IS NULL
+      WHERE zm.mascota_id = ${mascotaId}::uuid
+        AND z.esta_activa = true
+    `;
+
+    for (const zona of zonas) {
+      if (zona.esta_dentro && zona.visita_id === null) {
+        // Entró a la zona — abre registro de visita
+        await this.prisma.$executeRaw`
+          INSERT INTO registro_visitas_zonas (mascota_id, zona_id, fecha_hora_entrada)
+          VALUES (${mascotaId}::uuid, ${zona.zona_id}, ${now})
+        `;
+        this.realtime.emitPetEnteredZone({
+          mascotaId,
+          zonaId: zona.zona_id,
+          fechaHora: now,
+        });
+      } else if (!zona.esta_dentro && zona.visita_id !== null) {
+        // Salió de la zona — cierra registro y calcula duración
+        const duracionMinutos = Math.round(
+          (now.getTime() - zona.fecha_hora_entrada!.getTime()) / 60_000,
+        );
+        await this.prisma.$executeRaw`
+          UPDATE registro_visitas_zonas
+          SET fecha_hora_salida = ${now},
+              duracion_minutos  = ${duracionMinutos}
+          WHERE visita_id = ${zona.visita_id}
+        `;
+        this.realtime.emitPetExitedZone({
+          mascotaId,
+          zonaId: zona.zona_id,
+          fechaHora: now,
+          duracionMinutos,
+        });
+      }
+    }
   }
 
   async findUserCard(personaId: string) {
