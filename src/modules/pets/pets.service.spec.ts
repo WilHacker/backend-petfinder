@@ -373,17 +373,17 @@ describe('PetsService', () => {
     it('lanza ForbiddenException si se intenta eliminar al Dueno_Principal', async () => {
       mockPrisma.mascota.findUnique.mockResolvedValue(mockMascotaConCopropietario);
 
-      await expect(
-        service.removeOwner(MASCOTA_ID, PERSONA_ID, PERSONA_ID),
-      ).rejects.toThrow(ForbiddenException);
+      await expect(service.removeOwner(MASCOTA_ID, PERSONA_ID, PERSONA_ID)).rejects.toThrow(
+        ForbiddenException,
+      );
     });
 
     it('lanza NotFoundException si el propietario indicado no está en la lista', async () => {
       mockPrisma.mascota.findUnique.mockResolvedValue(mockMascota);
 
-      await expect(
-        service.removeOwner(MASCOTA_ID, PERSONA_ID, 'no-existe-uuid'),
-      ).rejects.toThrow(NotFoundException);
+      await expect(service.removeOwner(MASCOTA_ID, PERSONA_ID, 'no-existe-uuid')).rejects.toThrow(
+        NotFoundException,
+      );
     });
   });
 
