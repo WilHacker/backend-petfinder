@@ -40,7 +40,14 @@ type ZonaSnapshotRow = {
   geometria_json: string | null;
   // JSON_AGG devuelve objeto ya parseado por el driver pg
   mascotas:
-    | Array<{ mascotaId: string; nombre: string; estado: string | null; fotoUrl: string | null }>
+    | Array<{
+        mascotaId: string;
+        nombre: string;
+        estado: string | null;
+        fotoUrl: string | null;
+        lat: number | null;
+        lng: number | null;
+      }>
     | string;
 };
 
@@ -112,7 +119,9 @@ export class MapService {
               'fotoUrl',   (SELECT f.foto_url FROM fotos_mascota f
                             WHERE f.mascota_id = m.mascota_id
                             ORDER BY f.es_principal DESC, f.foto_id ASC
-                            LIMIT 1)
+                            LIMIT 1),
+              'lat',       ST_Y(m.ultima_ubicacion_conocida::geometry),
+              'lng',       ST_X(m.ultima_ubicacion_conocida::geometry)
             ) ORDER BY m.nombre
           ) AS mascotas
         FROM zonas_seguras z
@@ -151,15 +160,28 @@ export class MapService {
             ? (JSON.parse(z.mascotas) as ZonaSnapshotRow['mascotas'])
             : z.mascotas;
 
-        const base = {
-          zonaId: Number(z.zona_id),
-          nombre: z.nombre_zona,
-          mascotas: mascotas as Array<{
+        const mascotasMapped = (
+          mascotas as Array<{
             mascotaId: string;
             nombre: string;
             estado: string | null;
             fotoUrl: string | null;
-          }>,
+            lat: number | null;
+            lng: number | null;
+          }>
+        ).map((m) => ({
+          mascotaId: m.mascotaId,
+          nombre: m.nombre,
+          estado: m.estado,
+          fotoUrl: m.fotoUrl,
+          ubicacion:
+            m.lat != null && m.lng != null ? { lat: Number(m.lat), lng: Number(m.lng) } : null,
+        }));
+
+        const base = {
+          zonaId: Number(z.zona_id),
+          nombre: z.nombre_zona,
+          mascotas: mascotasMapped,
         };
 
         if (z.radio_metros != null) {

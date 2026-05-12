@@ -21,6 +21,7 @@ import { Public } from '../../common/decorators/public.decorator';
 import { AddOwnerDto } from './dto/add-owner.dto';
 import { CreatePetDto } from './dto/create-pet.dto';
 import { UpdatePetDto } from './dto/update-pet.dto';
+import { UpdatePetLocationDto } from './dto/update-pet-location.dto';
 import { UpdatePetStatusDto } from './dto/update-pet-status.dto';
 import { PetsService } from './pets.service';
 
@@ -103,6 +104,22 @@ export class PetsController {
   })
   getPetOwnersOnMap(@Param('id') mascotaId: string, @CurrentUser('personaId') personaId: string) {
     return this.petsService.findPetOwnersOnMap(mascotaId, personaId);
+  }
+
+  @Put(':id/location')
+  @ApiOperation({
+    summary: 'Actualizar ubicación manual de la mascota',
+    description:
+      'Fija las coordenadas de la mascota sin necesidad de un paseo activo. ' +
+      'Útil para establecer la ubicación inicial al registrarla o al recibir un avistamiento. ' +
+      'Emite evento WebSocket pet:location-updated a todos los co-propietarios.',
+  })
+  updateLocation(
+    @Param('id') mascotaId: string,
+    @CurrentUser('personaId') personaId: string,
+    @Body() dto: UpdatePetLocationDto,
+  ) {
+    return this.petsService.updatePetLocation(mascotaId, personaId, dto.lat, dto.lng);
   }
 
   @Put(':id/status')

@@ -324,6 +324,35 @@ export class PetsService {
     return actualizada;
   }
 
+  async updatePetLocation(mascotaId: string, personaId: string, lat: number, lng: number) {
+    const mascota = await this.prisma.mascota.findUnique({
+      where: { mascotaId },
+      include: { propietarios: true },
+    });
+    if (!mascota) throw new NotFoundException('Mascota no encontrada');
+    this.checkOwnership(mascota, personaId);
+
+    const now = new Date();
+
+    await this.prisma.$executeRaw`
+      UPDATE mascotas
+      SET
+        ultima_ubicacion_conocida = ST_SetSRID(ST_MakePoint(${lng}, ${lat}), 4326),
+        fecha_ultima_ubicacion    = ${now}
+      WHERE mascota_id = ${mascotaId}::uuid
+    `;
+
+    this.realtime.emitPetLocationUpdated({
+      mascotaId,
+      lat,
+      lng,
+      estado: mascota.estado ?? 'en_casa',
+      fechaActualizacion: now,
+    });
+
+    return { message: 'Ubicación de la mascota actualizada' };
+  }
+
   async findPetCard(mascotaId: string) {
     const mascota = await this.prisma.mascota.findUnique({
       where: { mascotaId },

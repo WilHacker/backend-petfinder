@@ -104,6 +104,7 @@ const mockRealtime = {
   emitPetRegistered: jest.fn(),
   emitPetStatusChanged: jest.fn(),
   emitOwnerAdded: jest.fn(),
+  emitPetLocationUpdated: jest.fn(),
 };
 
 describe('PetsService', () => {
@@ -571,6 +572,54 @@ describe('PetsService', () => {
       await expect(service.deletePhoto(MASCOTA_ID, PERSONA_ID, FOTO_ID)).rejects.toThrow(
         ForbiddenException,
       );
+    });
+  });
+
+  // ─────────────────────── updatePetLocation ───────────────────
+
+  describe('updatePetLocation', () => {
+    beforeEach(() => {
+      mockPrisma.mascota.findUnique.mockResolvedValue(mockMascota);
+      mockPrisma.$executeRaw.mockResolvedValue(1);
+    });
+
+    it('ejecuta UPDATE con las coordenadas recibidas', async () => {
+      await service.updatePetLocation(MASCOTA_ID, PERSONA_ID, -17.4, -66.15);
+
+      expect(mockPrisma.$executeRaw).toHaveBeenCalledTimes(1);
+    });
+
+    it('retorna mensaje de confirmación', async () => {
+      const result = await service.updatePetLocation(MASCOTA_ID, PERSONA_ID, -17.4, -66.15);
+
+      expect(result).toEqual({ message: 'Ubicación de la mascota actualizada' });
+    });
+
+    it('emite pet:location-updated con las coordenadas correctas', async () => {
+      await service.updatePetLocation(MASCOTA_ID, PERSONA_ID, -17.4, -66.15);
+
+      expect(mockRealtime.emitPetLocationUpdated).toHaveBeenCalledWith(
+        expect.objectContaining({ mascotaId: MASCOTA_ID, lat: -17.4, lng: -66.15 }),
+      );
+    });
+
+    it('lanza NotFoundException si la mascota no existe', async () => {
+      mockPrisma.mascota.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.updatePetLocation('no-existe', PERSONA_ID, -17.4, -66.15),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('lanza ForbiddenException si el usuario no es propietario', async () => {
+      mockPrisma.mascota.findUnique.mockResolvedValue({
+        ...mockMascota,
+        propietarios: [{ personaId: 'otro-uuid' }],
+      });
+
+      await expect(
+        service.updatePetLocation(MASCOTA_ID, PERSONA_ID, -17.4, -66.15),
+      ).rejects.toThrow(ForbiddenException);
     });
   });
 });
