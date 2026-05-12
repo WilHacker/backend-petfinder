@@ -129,6 +129,40 @@ describe('GeofencingService', () => {
     });
   });
 
+  // ───────────────────────── findMyZones ───────────────────────
+
+  describe('findMyZones', () => {
+    it('retorna todas las zonas del usuario con mascotas y tipo', async () => {
+      const mockRow = {
+        zona_id: ZONA_ID,
+        nombre_zona: 'Casa',
+        tipo: 'circulo',
+        radio_metros: 200,
+        esta_activa: true,
+        centro_lat: -17.78,
+        centro_lng: -63.18,
+        mascotas: [
+          { mascota_id: MASCOTA_ID, nombre: 'Rex', estado: 'en_casa', tipo_mascota: 'Perro' },
+        ],
+      };
+      mockPrisma.$queryRaw.mockResolvedValue([mockRow]);
+
+      const result = await service.findMyZones(PERSONA_ID);
+
+      expect(result).toHaveLength(1);
+      expect(result[0].tipo).toBe('circulo');
+      expect(result[0].mascotas[0].tipo_mascota).toBe('Perro');
+    });
+
+    it('retorna array vacío si el usuario no tiene zonas', async () => {
+      mockPrisma.$queryRaw.mockResolvedValue([]);
+
+      const result = await service.findMyZones(PERSONA_ID);
+
+      expect(result).toHaveLength(0);
+    });
+  });
+
   // ───────────────────────── findZones ─────────────────────────
 
   describe('findZones', () => {

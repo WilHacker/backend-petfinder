@@ -38,6 +38,12 @@ export class GeofencingController {
     return this.geofencingService.createZone(mascotaId, personaId, dto);
   }
 
+  @Get('zones')
+  @ApiOperation({ summary: 'Listar todas mis zonas seguras con sus mascotas y tipo de zona' })
+  findMyZones(@CurrentUser('personaId') personaId: string) {
+    return this.geofencingService.findMyZones(personaId);
+  }
+
   @Get('pets/:petId/zones')
   @ApiOperation({ summary: 'Listar zonas donde está registrada una mascota' })
   findZones(@Param('petId') mascotaId: string, @CurrentUser('personaId') personaId: string) {

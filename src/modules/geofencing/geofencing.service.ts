@@ -60,6 +60,52 @@ export class GeofencingService {
     return this.findZone(zonaId, personaId);
   }
 
+  async findMyZones(personaId: string) {
+    return this.prisma.$queryRaw<
+      Array<{
+        zona_id: number;
+        nombre_zona: string | null;
+        tipo: 'circulo' | 'poligono';
+        radio_metros: number | null;
+        esta_activa: boolean;
+        centro_lat: number | null;
+        centro_lng: number | null;
+        mascotas: Array<{
+          mascota_id: string;
+          nombre: string;
+          estado: string | null;
+          tipo_mascota: string | null;
+        }>;
+      }>
+    >`
+      SELECT
+        z.zona_id,
+        z.nombre_zona,
+        CASE WHEN z.radio_metros IS NOT NULL THEN 'circulo' ELSE 'poligono' END AS tipo,
+        z.radio_metros,
+        z.esta_activa,
+        ST_Y(z.punto_central::geometry) AS centro_lat,
+        ST_X(z.punto_central::geometry) AS centro_lng,
+        JSON_AGG(
+          JSON_BUILD_OBJECT(
+            'mascota_id', m.mascota_id,
+            'nombre',     m.nombre,
+            'estado',     m.estado,
+            'tipo_mascota', tm.nombre
+          )
+          ORDER BY m.nombre
+        ) AS mascotas
+      FROM zonas_seguras z
+      JOIN zona_mascotas zm         ON zm.zona_id    = z.zona_id
+      JOIN mascotas m               ON m.mascota_id  = zm.mascota_id
+      LEFT JOIN tipos_mascota tm    ON tm.tipo_id    = m.tipo_id
+      JOIN propietarios_mascota pm  ON pm.mascota_id = m.mascota_id
+                                   AND pm.persona_id = ${personaId}::uuid
+      GROUP BY z.zona_id, z.nombre_zona, z.radio_metros, z.esta_activa, z.punto_central
+      ORDER BY z.zona_id
+    `;
+  }
+
   async findZones(mascotaId: string, personaId: string) {
     await this.checkPetOwnership(mascotaId, personaId);
 
