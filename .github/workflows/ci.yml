@@ -45,11 +45,11 @@ jobs:
 
       - name: Verificar artefacto de build
         run: |
-          if [ ! -f dist/main.js ]; then
-            echo "::error::dist/main.js no se generó"
+          if [ ! -f dist/src/main.js ]; then
+            echo "::error::dist/src/main.js no se generó"
             exit 1
           fi
-          echo "✅ Build exitoso — dist/main.js existe"
+          echo "✅ Build exitoso — dist/src/main.js existe"
 
   # ============================================================
   # JOB 2 — Build de Docker image (solo en push a main)
