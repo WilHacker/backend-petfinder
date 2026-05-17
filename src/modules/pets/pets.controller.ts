@@ -19,6 +19,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { Public } from '../../common/decorators/public.decorator';
 import { AddOwnerDto } from './dto/add-owner.dto';
+import { CreateMedicalRecordDto } from './dto/create-medical-record.dto';
 import { CreatePetDto } from './dto/create-pet.dto';
 import { UpdatePetDto } from './dto/update-pet.dto';
 import { UpdatePetLocationDto } from './dto/update-pet-location.dto';
@@ -238,6 +239,32 @@ export class PetsController {
   ) {
     const principalIndex = principalIndexStr !== undefined ? parseInt(principalIndexStr, 10) : 0;
     return this.petsService.uploadPhotos(mascotaId, personaId, files ?? [], principalIndex);
+  }
+
+  @Get(':id/medical')
+  @ApiOperation({ summary: 'Listar registros médicos de la mascota (vacunas, consultas, etc.)' })
+  getMedicalRecords(@Param('id') mascotaId: string, @CurrentUser('personaId') personaId: string) {
+    return this.petsService.getMedicalRecords(mascotaId, personaId);
+  }
+
+  @Post(':id/medical')
+  @ApiOperation({ summary: 'Agregar registro médico (vacuna, consulta, cirugía, etc.)' })
+  addMedicalRecord(
+    @Param('id') mascotaId: string,
+    @CurrentUser('personaId') personaId: string,
+    @Body() dto: CreateMedicalRecordDto,
+  ) {
+    return this.petsService.addMedicalRecord(mascotaId, personaId, dto);
+  }
+
+  @Delete(':id/medical/:registroId')
+  @ApiOperation({ summary: 'Eliminar un registro médico' })
+  removeMedicalRecord(
+    @Param('id') mascotaId: string,
+    @Param('registroId', ParseIntPipe) registroId: number,
+    @CurrentUser('personaId') personaId: string,
+  ) {
+    return this.petsService.removeMedicalRecord(mascotaId, personaId, registroId);
   }
 
   @Delete(':id/photos/:fotoId')

@@ -64,8 +64,18 @@ describe('UsersService', () => {
         UsersService,
         { provide: PrismaService, useValue: mockPrisma },
         { provide: RealtimeService, useValue: mockRealtime },
+        {
+          provide: 'CloudinaryService',
+          useValue: { uploadBuffer: jest.fn(), deleteByUrl: jest.fn() },
+        },
       ],
-    }).compile();
+    })
+      .useMocker((token) => {
+        if (token?.toString().includes('CloudinaryService')) {
+          return { uploadBuffer: jest.fn(), deleteByUrl: jest.fn() };
+        }
+      })
+      .compile();
 
     service = module.get<UsersService>(UsersService);
   });

@@ -1,6 +1,12 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RealtimeService } from '../../infrastructure/realtime/realtime.service';
+import { CloudinaryService } from '../../cloudinary/cloudinary.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { AddContactDto } from './dto/add-contact.dto';
 import { UpdateLocationDto } from './dto/update-location.dto';
@@ -17,6 +23,7 @@ export class UsersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeService,
+    private readonly cloudinary: CloudinaryService,
   ) {}
 
   async findMe(usuarioId: string) {
@@ -84,6 +91,29 @@ export class UsersService {
       },
     });
     return persona;
+  }
+
+  async updateProfilePhoto(usuarioId: string, file: Express.Multer.File) {
+    if (!file.mimetype.startsWith('image/'))
+      throw new BadRequestException('Solo se permiten imágenes');
+
+    const usuario = await this.prisma.usuario.findUnique({
+      where: { usuarioId },
+      select: { personaId: true, persona: { select: { fotoPerfilUrl: true } } },
+    });
+    if (!usuario) throw new NotFoundException('Usuario no encontrado');
+
+    if (usuario.persona.fotoPerfilUrl) {
+      await this.cloudinary.deleteByUrl(usuario.persona.fotoPerfilUrl).catch(() => null);
+    }
+
+    const upload = await this.cloudinary.uploadBuffer(file.buffer, `personas/${usuario.personaId}`);
+
+    return this.prisma.persona.update({
+      where: { personaId: usuario.personaId },
+      data: { fotoPerfilUrl: upload.secure_url },
+      select: { personaId: true, fotoPerfilUrl: true },
+    });
   }
 
   async addContact(usuarioId: string, dto: AddContactDto) {

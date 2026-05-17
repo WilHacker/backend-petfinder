@@ -1,6 +1,8 @@
 import { ConflictException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
+import { randomUUID } from 'crypto';
+import { RolUsuario } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
@@ -52,18 +54,16 @@ export class AuthService {
       return { persona, usuario };
     });
 
-    const token = this.jwtService.sign({
-      sub: usuario.usuarioId,
-      personaId: persona.personaId,
-    });
+    const tokens = await this.generateTokens(usuario.usuarioId, persona.personaId, usuario.rol);
 
     return {
-      accessToken: token,
+      ...tokens,
       usuario: {
         usuarioId: usuario.usuarioId,
         correoElectronico: usuario.correoElectronico,
         nombre: persona.nombre,
         apellidoPaterno: persona.apellidoPaterno,
+        rol: usuario.rol,
       },
     };
   }
@@ -79,24 +79,116 @@ export class AuthService {
     const valida = await bcrypt.compare(dto.clave, usuario.claveHash);
     if (!valida) throw new UnauthorizedException('Credenciales inválidas');
 
+    const tokens = await this.generateTokens(usuario.usuarioId, usuario.personaId, usuario.rol);
+
     await this.prisma.usuario.update({
       where: { usuarioId: usuario.usuarioId },
       data: { ultimoAcceso: new Date() },
     });
 
-    const token = this.jwtService.sign({
-      sub: usuario.usuarioId,
-      personaId: usuario.personaId,
-    });
-
     return {
-      accessToken: token,
+      ...tokens,
       usuario: {
         usuarioId: usuario.usuarioId,
         correoElectronico: usuario.correoElectronico,
         nombre: usuario.persona.nombre,
         apellidoPaterno: usuario.persona.apellidoPaterno,
+        rol: usuario.rol,
       },
     };
+  }
+
+  async refresh(refreshToken: string) {
+    // Busca al usuario que tenga este refresh token
+    const usuarios = await this.prisma.usuario.findMany({
+      where: { refreshTokenHash: { not: null } },
+      select: { usuarioId: true, personaId: true, refreshTokenHash: true },
+    });
+
+    let matchedUsuario: { usuarioId: string; personaId: string } | null = null;
+    for (const u of usuarios) {
+      if (u.refreshTokenHash && (await bcrypt.compare(refreshToken, u.refreshTokenHash))) {
+        matchedUsuario = u;
+        break;
+      }
+    }
+
+    if (!matchedUsuario) throw new UnauthorizedException('Refresh token inválido o expirado');
+
+    return this.generateTokens(matchedUsuario.usuarioId, matchedUsuario.personaId);
+  }
+
+  async logout(usuarioId: string) {
+    await this.prisma.usuario.update({
+      where: { usuarioId },
+      data: { refreshTokenHash: null },
+    });
+    return { message: 'Sesión cerrada correctamente' };
+  }
+
+  async findOrCreateGoogleUser(googleUser: {
+    email: string;
+    nombre: string;
+    apellidoPaterno: string;
+    fotoPerfilUrl?: string;
+  }) {
+    const existing = await this.prisma.usuario.findUnique({
+      where: { correoElectronico: googleUser.email },
+      include: { persona: true },
+    });
+
+    if (existing) {
+      return this.generateTokens(existing.usuarioId, existing.personaId);
+    }
+
+    // Crear cuenta nueva con clave aleatoria (no la necesita para OAuth)
+    const claveHash = await bcrypt.hash(randomUUID(), 10);
+
+    const { usuario } = await this.prisma.$transaction(async (tx) => {
+      const persona = await tx.persona.create({
+        data: {
+          nombre: googleUser.nombre,
+          apellidoPaterno: googleUser.apellidoPaterno,
+          fotoPerfilUrl: googleUser.fotoPerfilUrl,
+        },
+      });
+
+      const usuario = await tx.usuario.create({
+        data: {
+          personaId: persona.personaId,
+          correoElectronico: googleUser.email,
+          claveHash,
+        },
+      });
+
+      return { persona, usuario };
+    });
+
+    return this.generateTokens(usuario.usuarioId, usuario.personaId);
+  }
+
+  // ─── helpers ────────────────────────────────────────────────────────────────
+
+  private async generateTokens(usuarioId: string, personaId: string, rol?: RolUsuario) {
+    let userRol = rol;
+    if (!userRol) {
+      const u = await this.prisma.usuario.findUnique({
+        where: { usuarioId },
+        select: { rol: true },
+      });
+      userRol = u?.rol ?? RolUsuario.usuario;
+    }
+
+    const accessToken = this.jwtService.sign({ sub: usuarioId, personaId, rol: userRol });
+
+    const refreshToken = randomUUID();
+    const refreshTokenHash = await bcrypt.hash(refreshToken, 10);
+
+    await this.prisma.usuario.update({
+      where: { usuarioId },
+      data: { refreshTokenHash },
+    });
+
+    return { accessToken, refreshToken };
   }
 }

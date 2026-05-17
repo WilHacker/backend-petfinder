@@ -1,4 +1,6 @@
+import { JwtService } from '@nestjs/jwt';
 import { Test, TestingModule } from '@nestjs/testing';
+import { Reflector } from '@nestjs/core';
 import { TiposMascotaController } from './tipos-mascota.controller';
 import { TiposMascotaService } from './tipos-mascota.service';
 
@@ -8,7 +10,11 @@ const mockTipos = [
   { tipoId: 3, nombre: 'Ave' },
 ];
 
-const mockService = { findAll: jest.fn() };
+const mockService = {
+  findAll: jest.fn(),
+  create: jest.fn(),
+  remove: jest.fn(),
+};
 
 describe('TiposMascotaController', () => {
   let controller: TiposMascotaController;
@@ -18,7 +24,11 @@ describe('TiposMascotaController', () => {
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [TiposMascotaController],
-      providers: [{ provide: TiposMascotaService, useValue: mockService }],
+      providers: [
+        { provide: TiposMascotaService, useValue: mockService },
+        { provide: JwtService, useValue: { verifyAsync: jest.fn() } },
+        Reflector,
+      ],
     }).compile();
 
     controller = module.get<TiposMascotaController>(TiposMascotaController);

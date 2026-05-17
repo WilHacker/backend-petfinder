@@ -23,6 +23,7 @@ const mockUsuario = {
   personaId: 'persona-uuid',
   correoElectronico: 'juan@test.com',
   claveHash: 'hashed_pw',
+  rol: 'usuario',
   persona: mockPersona,
 };
 
@@ -95,6 +96,7 @@ describe('AuthService', () => {
       expect(mockJwtService.sign).toHaveBeenCalledWith({
         sub: mockUsuario.usuarioId,
         personaId: mockPersona.personaId,
+        rol: mockUsuario.rol,
       });
     });
 

@@ -1,6 +1,6 @@
 # PetFinder Backend — Documentación Técnica Completa
 
-> Versión: 1.0 | Stack: NestJS v11 · Prisma 7 · PostgreSQL/PostGIS · Socket.io · Cloudinary
+> Versión: 2.0 | Stack: NestJS v11 · Prisma 7 · PostgreSQL/PostGIS · Socket.io · Cloudinary · Firebase Admin · Passport Google OAuth2
 
 ---
 
@@ -12,14 +12,16 @@
 4. [API REST — Auth](#4-api-rest--auth)
 5. [API REST — Usuarios](#5-api-rest--usuarios)
 6. [API REST — Mascotas](#6-api-rest--mascotas)
-7. [API REST — Geofencing](#7-api-rest--geofencing)
-8. [API REST — Tipos de Mascota](#8-api-rest--tipos-de-mascota)
-9. [API REST — Mapa](#9-api-rest--mapa)
-10. [WebSocket — Tiempo Real](#10-websocket--tiempo-real)
-11. [Geofencing — Lógica Espacial](#11-geofencing--lógica-espacial)
-12. [Gestión de Fotos](#12-gestión-de-fotos)
-13. [Seguridad y Rate Limiting](#13-seguridad-y-rate-limiting)
-14. [Historial de Migraciones](#14-historial-de-migraciones)
+7. [API REST — QR Inteligente](#7-api-rest--qr-inteligente)
+8. [API REST — Geofencing](#8-api-rest--geofencing)
+9. [API REST — Tipos de Mascota](#9-api-rest--tipos-de-mascota)
+10. [API REST — Mapa](#10-api-rest--mapa)
+11. [WebSocket — Tiempo Real](#11-websocket--tiempo-real)
+12. [Geofencing — Lógica Espacial](#12-geofencing--lógica-espacial)
+13. [Gestión de Fotos](#13-gestión-de-fotos)
+14. [Push Notifications — FCM](#14-push-notifications--fcm)
+15. [Seguridad y Rate Limiting](#15-seguridad-y-rate-limiting)
+16. [Historial de Migraciones](#16-historial-de-migraciones)
 
 ---
 
@@ -36,21 +38,41 @@ PetFinder es un ecosistema telemático para la gestión, localización y recuper
 | Base de datos | PostgreSQL (Supabase) + extensión PostGIS |
 | Tiempo real | Socket.io (namespace `/realtime`) |
 | Almacenamiento de imágenes | Cloudinary |
-| Autenticación | JWT (Bearer token, 24 h por defecto) |
+| Autenticación | JWT Bearer (access 15 min) + Refresh Token (30 días) |
+| OAuth2 | Google OAuth2 via `passport-google-oauth20` |
+| Push Notifications | Firebase Admin SDK (FCM) |
 | Documentación interactiva | Swagger en `GET /api/docs` |
 
 ### Variables de entorno requeridas
 
 ```env
-DATABASE_URL=postgresql://...        # URL de conexión con pgBouncer (runtime)
+# Base de datos
+DATABASE_URL=postgresql://...        # URL con pgBouncer (runtime)
 DIRECT_URL=postgresql://...          # URL directa sin pgBouncer (migraciones)
+
+# JWT
 JWT_SECRET=tu_secreto_jwt
-JWT_EXPIRES_IN=24h                   # Opcional, default 24h
+JWT_EXPIRES_IN=15m                   # Access token (default 15m)
+
+# Cloudinary
 CLOUDINARY_CLOUD_NAME=...
 CLOUDINARY_API_KEY=...
 CLOUDINARY_API_SECRET=...
+
+# Firebase Admin SDK
+FIREBASE_PROJECT_ID=...
+FIREBASE_CLIENT_EMAIL=...
+FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+
+# Google OAuth2
+GOOGLE_CLIENT_ID=...
+GOOGLE_CLIENT_SECRET=...
+GOOGLE_CALLBACK_URL=http://localhost:3000/auth/google/callback
+
+# General
 FRONTEND_URL=https://petfinder.app   # Para generar URLs del QR
-PORT=3000                            # Opcional, default 3000
+PORT=3000
+NODE_ENV=development
 ```
 
 ### Cómo levantar el proyecto
@@ -70,15 +92,6 @@ npm run start:dev           # Servidor en http://localhost:3000
   ```json
   { "statusCode": 400, "error": "Bad Request", "message": "Descripción" }
   ```
-- Los errores de validación incluyen el campo `errores`:
-  ```json
-  {
-    "statusCode": 400,
-    "error": "Bad Request",
-    "message": "Error de validación",
-    "errores": { "nombre": ["El nombre de la mascota es obligatorio"] }
-  }
-  ```
 
 ---
 
@@ -86,18 +99,14 @@ npm run start:dev           # Servidor en http://localhost:3000
 
 ### EstadoMascota
 
-Estado del ciclo de vida de una mascota. Controla la propagación de GPS y la creación de reportes de extravío.
-
 | Valor | Descripción |
 |---|---|
-| `en_casa` | Estado por defecto al registrar. La mascota está en casa, sin seguimiento GPS activo. |
-| `en_paseo` | La mascota sale con su dueño. Las coordenadas del dueño se propagan automáticamente a la mascota en cada actualización de ubicación. |
-| `extraviada` | La mascota está perdida. Se crea automáticamente un `ReporteExtravio` y la mascota aparece en el mapa público. |
-| `recuperada` | La mascota fue encontrada. El reporte de extravío abierto se cierra automáticamente. |
+| `en_casa` | Estado por defecto al registrar. Sin seguimiento GPS activo. |
+| `en_paseo` | Las coordenadas del dueño se propagan automáticamente a la mascota. |
+| `extraviada` | Se crea automáticamente un `ReporteExtravio`. Se envían push notifications a propietarios y usuarios cercanos. |
+| `recuperada` | El reporte de extravío abierto se cierra automáticamente. |
 
 ### TipoContacto
-
-Tipos de medios de contacto que un dueño puede registrar.
 
 | Valor | Descripción |
 |---|---|
@@ -108,56 +117,73 @@ Tipos de medios de contacto que un dueño puede registrar.
 
 ### RelacionPropietario
 
-Tipo de relación entre una persona y una mascota.
+| Valor | Descripción |
+|---|---|
+| `Dueño Principal` | Propietario principal. **No se puede eliminar.** |
+| `Familiar` | Familiar del dueño con acceso a la mascota. |
+| `Cuidador` | Tipo por defecto al agregar un co-propietario. |
+
+### RolUsuario
 
 | Valor | Descripción |
 |---|---|
-| `Dueño Principal` | Propietario principal. Se asigna automáticamente al crear la mascota. **No se puede eliminar.** |
-| `Familiar` | Familiar del dueño con acceso a la mascota. |
-| `Cuidador` | Cuidador externo. Es el tipo por defecto al agregar un co-propietario. |
+| `usuario` | Rol por defecto. Acceso a sus propios recursos. |
+| `admin` | Acceso a endpoints de administración (gestionar tipos de mascota, etc.). |
 
 ---
 
 ## 3. Reglas de Negocio
 
+### Sesión y Tokens
+
+- El login devuelve un **access token** (JWT, 15 min) y un **refresh token** (UUID, 30 días).
+- El refresh token se almacena como hash bcrypt en la BD — nunca se guarda en texto plano.
+- Cada uso de `POST /auth/refresh` invalida el refresh token anterior y emite uno nuevo (**rotación**).
+- `POST /auth/logout` limpia el hash del refresh token en la BD, invalidando la sesión.
+
+### Registro con Google
+
+- `GET /auth/google` redirige a la pantalla de Google. No requiere token.
+- Si el email ya existe en la BD → hace login automático y devuelve tokens.
+- Si el email no existe → crea `Persona` + `Usuario` con contraseña aleatoria y devuelve tokens.
+- El response es idéntico al login normal: `{ accessToken, refreshToken, usuario }`.
+
+### Roles
+
+- El `rol` se incluye en el payload del JWT para evitar consultas a la BD en cada request.
+- Los endpoints de administración usan `@Roles('admin')` + `RolesGuard`.
+- El rol por defecto es `usuario`. Solo un admin puede elevar roles (desde la BD directamente por ahora).
+
 ### Usuarios y Personas
 
-- El sistema separa **Persona** (datos biográficos) de **Usuario** (cuenta de acceso). Una persona puede existir sin usuario (ej. co-propietario sin cuenta).
+- El sistema separa **Persona** (datos biográficos) de **Usuario** (cuenta de acceso).
 - Al registrarse, se crean `Persona`, `Usuario` y opcionalmente un `MedioContacto` en una transacción atómica.
-- El `ultimoAcceso` del usuario se actualiza en cada `login` exitoso.
 
 ### Mascotas
 
 - Al crear una mascota se genera automáticamente una **PlacaQR** con `tokenAcceso` único.
-- La mascota se registra **sin coordenadas GPS** — no tiene dispositivo propio. Las coordenadas las aporta el teléfono del dueño vía `PUT /users/me/location`.
 - Una mascota puede tener **1 a 4 fotos**. No se puede eliminar la única foto existente.
-- El `Dueno_Principal` no puede ser eliminado de la lista de propietarios. Si alguien quiere transferir la mascota, debe eliminarla y registrarla de nuevo.
-- Máximo **4 fotos** por mascota (jpeg, png, webp, gif — 5 MB por archivo).
+- El `Dueno_Principal` no puede ser eliminado de la lista de propietarios.
 
-### GPS y propagación de ubicación
+### Registros Médicos
 
-- El dueño actualiza su posición con `PUT /users/me/location`.
-- Si tiene mascotas en estado `en_paseo`, las coordenadas se propagan automáticamente a esas mascotas.
-- Al mismo tiempo, el sistema verifica si la mascota entró o salió de alguna zona segura registrada.
+- Cualquier propietario puede agregar registros médicos (vacunas, consultas, cirugías, etc.).
+- Los registros son visibles públicamente al escanear el QR de la mascota.
+- Los tipos recomendados son: `vacuna`, `consulta`, `cirugia`, `tratamiento`, `desparasitacion`, `otro`.
+
+### QR Inteligente
+
+- El QR de la placa codifica la URL `{FRONTEND_URL}/scan/{tokenAcceso}`.
+- El frontend llama a `GET /qr/:token` para obtener el perfil completo de la mascota.
+- Después de capturar el GPS del navegador, llama a `POST /qr/:token/scan` con las coordenadas.
+- Si se envían coordenadas, el dueño recibe una push notification FCM con el enlace a Google Maps.
 
 ### Estados y ReporteExtravio
 
 | Transición | Efecto |
 |---|---|
-| Cualquier estado → `extraviada` | Se crea un `ReporteExtravio` con la última ubicación conocida. Si ya había uno abierto, no se duplica. |
+| Cualquier estado → `extraviada` | Se crea `ReporteExtravio`. FCM a propietarios. FCM a usuarios con zonas seguras en un radio de 5 km. |
 | `extraviada` → cualquier otro | El `ReporteExtravio` abierto se cierra (`estado_reporte = 'cerrado'`). |
-
-### Zonas Seguras
-
-- Una mascota puede estar **registrada** en múltiples zonas (ej. casa y trabajo del dueño).
-- Pero físicamente solo puede estar **dentro** de una zona a la vez (garantizado por PostGIS, no por restricción de BD).
-- Al crear una zona, solo se puede asociar mascotas de las cuales el usuario sea propietario.
-- El `Dueno_Principal` no puede ser removido de la mascota.
-
-### Fotos en Cloudinary
-
-- Al reemplazar fotos (`POST /pets/:id/photos`), las fotos anteriores se eliminan de Cloudinary antes de subir las nuevas.
-- Si la subida a Cloudinary falla, la mascota conserva sus fotos anteriores (operación fuera de transacción de BD).
 
 ---
 
@@ -171,7 +197,7 @@ Base URL: `/auth` | Rate limit: **10 req/min por IP**
 
 Crea una cuenta nueva. Genera `Persona`, `Usuario` y opcionalmente un primer `MedioContacto` en una transacción atómica.
 
-**Autenticación:** 🌐 Pública (no requiere token)
+**Autenticación:** 🌐 Pública
 
 **Body:**
 
@@ -196,21 +222,23 @@ Crea una cuenta nueva. Genera `Persona`, `Usuario` y opcionalmente un primer `Me
 | `apellidoPaterno` | string | Sí | No vacío, máx. 100 caracteres |
 | `apellidoMaterno` | string | No | Máx. 100 caracteres |
 | `ci` | string | No | Único en el sistema, máx. 20 caracteres |
-| `correoElectronico` | string | Sí | Formato email válido, único en el sistema |
+| `correoElectronico` | string | Sí | Formato email válido, único |
 | `clave` | string | Sí | Mín. 6 caracteres |
-| `medioContacto.tipo` | enum | No (si se envía) | `WhatsApp`, `Celular`, `Fijo`, `Telegram` |
-| `medioContacto.valor` | string | No (si se envía) | No vacío, máx. 50 caracteres |
+| `medioContacto.tipo` | enum | No | `WhatsApp`, `Celular`, `Fijo`, `Telegram` |
+| `medioContacto.valor` | string | No | No vacío, máx. 50 caracteres |
 
 **Respuesta exitosa (201):**
 
 ```json
 {
   "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "refreshToken": "550e8400-e29b-41d4-a716-446655440000",
   "usuario": {
     "usuarioId": "a1b2c3d4-...",
     "correoElectronico": "juan@email.com",
     "nombre": "Juan",
-    "apellidoPaterno": "Pérez"
+    "apellidoPaterno": "Pérez",
+    "rol": "usuario"
   }
 }
 ```
@@ -219,16 +247,14 @@ Crea una cuenta nueva. Genera `Persona`, `Usuario` y opcionalmente un primer `Me
 
 | Código | Causa |
 |---|---|
-| 400 | Validación fallida (campos faltantes o incorrectos) |
+| 400 | Validación fallida |
 | 409 | El correo electrónico ya está registrado |
 
 ---
 
 ### POST /auth/login
 
-Inicia sesión y devuelve un token JWT.
-
-**Autenticación:** 🌐 Pública (no requiere token)
+**Autenticación:** 🌐 Pública
 
 **Body:**
 
@@ -239,21 +265,18 @@ Inicia sesión y devuelve un token JWT.
 }
 ```
 
-| Campo | Tipo | Requerido | Validaciones |
-|---|---|---|---|
-| `correoElectronico` | string | Sí | Formato email válido |
-| `clave` | string | Sí | No vacío |
-
 **Respuesta exitosa (200):**
 
 ```json
 {
   "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "refreshToken": "550e8400-e29b-41d4-a716-446655440000",
   "usuario": {
     "usuarioId": "a1b2c3d4-...",
     "correoElectronico": "juan@email.com",
     "nombre": "Juan",
-    "apellidoPaterno": "Pérez"
+    "apellidoPaterno": "Pérez",
+    "rol": "usuario"
   }
 }
 ```
@@ -262,8 +285,87 @@ Inicia sesión y devuelve un token JWT.
 
 | Código | Causa |
 |---|---|
-| 400 | Validación fallida |
 | 401 | Correo o contraseña incorrectos |
+
+---
+
+### POST /auth/refresh
+
+Renueva el par de tokens. El refresh token anterior queda **invalidado** (rotación).
+
+**Autenticación:** 🌐 Pública
+
+**Body:**
+
+```json
+{ "refreshToken": "550e8400-e29b-41d4-a716-446655440000" }
+```
+
+**Respuesta exitosa (200):**
+
+```json
+{
+  "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "refreshToken": "nuevo-uuid-refresh-token",
+  "usuario": { ... }
+}
+```
+
+**Errores:**
+
+| Código | Causa |
+|---|---|
+| 401 | Refresh token inválido, expirado o ya usado |
+
+---
+
+### POST /auth/logout
+
+Invalida el refresh token del usuario. El access token sigue válido hasta su expiración natural.
+
+**Autenticación:** 🔒 Privada (Bearer token)
+
+**Respuesta exitosa (200):**
+
+```json
+{ "message": "Sesión cerrada" }
+```
+
+---
+
+### GET /auth/google
+
+Inicia el flujo OAuth2 con Google. Redirige automáticamente a la pantalla de login de Google.
+
+**Autenticación:** 🌐 Pública
+
+> No retorna JSON — redirige al navegador a Google.
+
+---
+
+### GET /auth/google/callback
+
+Callback interno de Google OAuth. Retorna tokens igual que el login normal.
+
+**Autenticación:** 🌐 Pública (manejado por Passport)
+
+**Respuesta exitosa (200):**
+
+```json
+{
+  "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "refreshToken": "550e8400-...",
+  "usuario": {
+    "usuarioId": "a1b2c3d4-...",
+    "correoElectronico": "juan@gmail.com",
+    "nombre": "Juan",
+    "apellidoPaterno": "Pérez",
+    "rol": "usuario"
+  }
+}
+```
+
+> Si el email ya existe en el sistema, vincula automáticamente la cuenta sin crear un usuario duplicado.
 
 ---
 
@@ -271,7 +373,7 @@ Inicia sesión y devuelve un token JWT.
 
 Base URL: `/users` | Rate limit: **120 req/min (global)**
 
-Todos los endpoints excepto los marcados 🌐 requieren header:
+Todos los endpoints requieren header:
 ```
 Authorization: Bearer <accessToken>
 ```
@@ -280,7 +382,7 @@ Authorization: Bearer <accessToken>
 
 ### GET /users/me
 
-Devuelve el perfil completo del usuario autenticado, incluyendo datos biográficos, medios de contacto y última ubicación GPS conocida.
+Devuelve el perfil completo del usuario autenticado.
 
 **Autenticación:** 🔒 Privada
 
@@ -290,6 +392,7 @@ Devuelve el perfil completo del usuario autenticado, incluyendo datos biográfic
 {
   "usuarioId": "a1b2c3d4-...",
   "correoElectronico": "juan@email.com",
+  "rol": "usuario",
   "tokenFcm": null,
   "configPrivacidad": { "mostrar_foto_qr": true },
   "estadoCuenta": "activa",
@@ -313,13 +416,6 @@ Devuelve el perfil completo del usuario autenticado, incluyendo datos biográfic
 
 > `ubicacion` es `null` si el usuario nunca actualizó su posición.
 
-**Errores:**
-
-| Código | Causa |
-|---|---|
-| 401 | Token ausente o inválido |
-| 404 | Usuario no encontrado |
-
 ---
 
 ### PUT /users/me
@@ -336,31 +432,42 @@ Actualiza los datos biográficos del usuario autenticado. Solo se actualizan los
   "apellidoPaterno": "Pérez",
   "apellidoMaterno": "López",
   "ci": "12345678",
-  "fechaNacimiento": "1990-05-15",
-  "fotoPerfilUrl": "https://res.cloudinary.com/..."
+  "fechaNacimiento": "1990-05-15"
 }
 ```
 
+**Respuesta exitosa (200):** Objeto `Persona` actualizado.
+
+---
+
+### PUT /users/me/photo
+
+Sube o reemplaza la foto de perfil del usuario. Si ya tenía foto, la elimina de Cloudinary antes de subir la nueva.
+
+**Autenticación:** 🔒 Privada
+
+**Content-Type:** `multipart/form-data`
+
+**Campos del formulario:**
+
 | Campo | Tipo | Requerido | Validaciones |
 |---|---|---|---|
-| `nombre` | string | No | No vacío, máx. 100 caracteres |
-| `apellidoPaterno` | string | No | No vacío, máx. 100 caracteres |
-| `apellidoMaterno` | string \| null | No | Máx. 100 caracteres, acepta null para borrar |
-| `ci` | string \| null | No | Máx. 20 caracteres |
-| `fechaNacimiento` | string (ISO date) | No | Formato `YYYY-MM-DD` |
-| `fotoPerfilUrl` | string \| null | No | URL válida |
+| `foto` | File | Sí | `image/jpeg`, `image/png`, `image/webp`; máx. 5 MB |
 
-**Respuesta exitosa (200):** Objeto `Persona` actualizado.
+**Ejemplo con curl:**
+
+```bash
+curl -X PUT http://localhost:3000/users/me/photo \
+  -H "Authorization: Bearer <token>" \
+  -F "foto=@mi_foto.jpg"
+```
+
+**Respuesta exitosa (200):**
 
 ```json
 {
   "personaId": "p1p2p3p4-...",
-  "nombre": "Juan Carlos",
-  "apellidoPaterno": "Pérez",
-  "apellidoMaterno": "López",
-  "ci": "12345678",
-  "fotoPerfilUrl": "https://res.cloudinary.com/...",
-  "fechaNacimiento": "1990-05-15T00:00:00.000Z"
+  "fotoPerfilUrl": "https://res.cloudinary.com/daelr9ppy/image/upload/personas/p1p2p3p4/foto.jpg"
 }
 ```
 
@@ -368,8 +475,7 @@ Actualiza los datos biográficos del usuario autenticado. Solo se actualizan los
 
 | Código | Causa |
 |---|---|
-| 400 | Validación fallida |
-| 401 | Token inválido |
+| 400 | MIME no permitido o archivo > 5 MB |
 | 404 | Usuario no encontrado |
 
 ---
@@ -390,12 +496,6 @@ Agrega un nuevo medio de contacto al perfil del usuario.
 }
 ```
 
-| Campo | Tipo | Requerido | Validaciones |
-|---|---|---|---|
-| `tipo` | enum | Sí | `WhatsApp`, `Celular`, `Fijo`, `Telegram` |
-| `valor` | string | Sí | No vacío, máx. 50 caracteres |
-| `esPrincipal` | boolean | No | Default `false` |
-
 **Respuesta exitosa (201):**
 
 ```json
@@ -408,14 +508,6 @@ Agrega un nuevo medio de contacto al perfil del usuario.
 }
 ```
 
-**Errores:**
-
-| Código | Causa |
-|---|---|
-| 400 | Tipo de contacto inválido |
-| 401 | Token inválido |
-| 404 | Usuario no encontrado |
-
 ---
 
 ### DELETE /users/me/contacts/:id
@@ -424,29 +516,10 @@ Elimina un medio de contacto del usuario autenticado.
 
 **Autenticación:** 🔒 Privada
 
-**Parámetros de ruta:**
-
-| Parámetro | Tipo | Descripción |
-|---|---|---|
-| `id` | integer | ID del medio de contacto a eliminar |
-
-**Respuesta exitosa (200):** Objeto del contacto eliminado.
-
-```json
-{
-  "contactoId": 5,
-  "personaId": "p1p2p3p4-...",
-  "tipo": "Telegram",
-  "valor": "@juan_petfinder",
-  "esPrincipal": false
-}
-```
-
 **Errores:**
 
 | Código | Causa |
 |---|---|
-| 401 | Token inválido |
 | 403 | El contacto pertenece a otro usuario |
 | 404 | Contacto no encontrado |
 
@@ -454,28 +527,20 @@ Elimina un medio de contacto del usuario autenticado.
 
 ### PUT /users/me/location
 
-Actualiza la ubicación GPS del usuario. Este es el endpoint central del sistema de seguimiento:
+Actualiza la ubicación GPS del usuario:
 1. Guarda la nueva posición del usuario.
-2. Inserta un registro en el historial de ubicaciones.
-3. Propaga las coordenadas a todas las mascotas del usuario que estén en estado `en_paseo`.
-4. Por cada mascota actualizada, verifica si entró o salió de alguna zona segura y emite los eventos WebSocket correspondientes.
-5. Emite `owner:location-updated` a todos los co-propietarios vía WebSocket.
+2. Inserta en el historial de ubicaciones.
+3. Propaga coordenadas a mascotas `en_paseo`.
+4. Verifica entrada/salida de zonas seguras y emite eventos WebSocket.
+5. Emite `owner:location-updated` a co-propietarios.
 
 **Autenticación:** 🔒 Privada
 
 **Body:**
 
 ```json
-{
-  "lat": -17.7863,
-  "lng": -63.1812
-}
+{ "lat": -17.7863, "lng": -63.1812 }
 ```
-
-| Campo | Tipo | Requerido | Validaciones |
-|---|---|---|---|
-| `lat` | number | Sí | −90 a 90 |
-| `lng` | number | Sí | −180 a 180 |
 
 **Respuesta exitosa (200):**
 
@@ -483,26 +548,13 @@ Actualiza la ubicación GPS del usuario. Este es el endpoint central del sistema
 { "message": "Ubicación actualizada" }
 ```
 
-**Errores:**
-
-| Código | Causa |
-|---|---|
-| 400 | Coordenadas fuera de rango |
-| 401 | Token inválido |
-
 ---
 
 ### GET /users/:personaId/card
 
-Devuelve la tarjeta de perfil de un usuario para mostrar en el popup del mapa. Incluye sus mascotas registradas.
+Devuelve la tarjeta de perfil de un usuario con sus mascotas registradas.
 
-**Autenticación:** 🔒 Privada (cualquier usuario autenticado puede ver la tarjeta de otro)
-
-**Parámetros de ruta:**
-
-| Parámetro | Tipo | Descripción |
-|---|---|---|
-| `personaId` | UUID | ID de la persona |
+**Autenticación:** 🔒 Privada
 
 **Respuesta exitosa (200):**
 
@@ -525,18 +577,11 @@ Devuelve la tarjeta de perfil de un usuario para mostrar en el popup del mapa. I
 }
 ```
 
-**Errores:**
-
-| Código | Causa |
-|---|---|
-| 401 | Token inválido |
-| 404 | Persona no encontrada |
-
 ---
 
 ### GET /users/map
 
-Lista los dueños visibles en el mapa con su última ubicación GPS conocida. Acepta filtro por proximidad.
+Lista los dueños visibles en el mapa con su última ubicación GPS.
 
 **Autenticación:** 🔒 Privada
 
@@ -545,24 +590,8 @@ Lista los dueños visibles en el mapa con su última ubicación GPS conocida. Ac
 | Parámetro | Tipo | Descripción |
 |---|---|---|
 | `lat` | number | Latitud del centro para filtrar por proximidad |
-| `lng` | number | Longitud del centro para filtrar por proximidad |
-| `radio` | number | Radio en metros (default: 5000 m si se pasan `lat`/`lng`) |
-
-**Respuesta exitosa (200):**
-
-```json
-[
-  {
-    "usuario_id": "a1b2c3d4-...",
-    "nombre": "Juan",
-    "apellido_paterno": "Pérez",
-    "lat": -17.7863,
-    "lng": -63.1812
-  }
-]
-```
-
-> Máximo 200 resultados. Solo usuarios con `estado_cuenta = 'activa'` y ubicación registrada.
+| `lng` | number | Longitud del centro |
+| `radio` | number | Radio en metros (default 5000 si se pasan lat/lng) |
 
 ---
 
@@ -574,13 +603,11 @@ Base URL: `/pets` | Rate limit: **120 req/min (global)**
 
 ### POST /pets
 
-Registra una nueva mascota con fotos opcionales. Crea automáticamente una PlacaQR. Soporta `multipart/form-data`.
+Registra una nueva mascota con fotos opcionales. Crea automáticamente una PlacaQR.
 
 **Autenticación:** 🔒 Privada
 
 **Content-Type:** `multipart/form-data`
-
-**Campos del formulario:**
 
 | Campo | Tipo | Requerido | Validaciones |
 |---|---|---|---|
@@ -590,21 +617,7 @@ Registra una nueva mascota con fotos opcionales. Crea automáticamente una Placa
 | `colorPrimario` | string | No | Máx. 50 caracteres |
 | `rasgosParticulares` | string | No | Texto libre |
 | `fotos` | File[] | No | 0 a 4 archivos; jpeg/png/webp/gif; máx. 5 MB cada uno |
-| `fotoPrincipalIndex` | integer | No | Índice 0-based de la foto principal (default: 0); 0 a 3 |
-
-**Ejemplo con curl:**
-
-```bash
-curl -X POST http://localhost:3000/pets \
-  -H "Authorization: Bearer <token>" \
-  -F "nombre=Firulais" \
-  -F "tipoId=1" \
-  -F "sexo=M" \
-  -F "colorPrimario=Café" \
-  -F "fotos=@foto1.jpg" \
-  -F "fotos=@foto2.jpg" \
-  -F "fotoPrincipalIndex=0"
-```
+| `fotoPrincipalIndex` | integer | No | Índice 0-based (default 0) |
 
 **Respuesta exitosa (201):**
 
@@ -615,21 +628,9 @@ curl -X POST http://localhost:3000/pets \
   "tipoId": 1,
   "sexo": "M",
   "colorPrimario": "Café",
-  "rasgosParticulares": null,
   "estado": "en_casa",
-  "creadoEl": "2026-05-11T10:00:00.000Z",
-  "propietarios": [
-    {
-      "personaId": "p1p2p3p4-...",
-      "mascotaId": "m1m2m3m4-...",
-      "tipoRelacion": "Dueño Principal",
-      "recibeAlertas": true,
-      "mostrarEnQr": true
-    }
-  ],
   "placaQr": {
     "placaId": "q1q2q3q4-...",
-    "mascotaId": "m1m2m3m4-...",
     "tokenAcceso": "t1t2t3t4-...",
     "estaActiva": true
   },
@@ -639,152 +640,71 @@ curl -X POST http://localhost:3000/pets \
 }
 ```
 
-> Al crear la mascota, se emite el evento WebSocket `pet:registered` al socket del dueño.
-
-**Errores:**
-
-| Código | Causa |
-|---|---|
-| 400 | Más de 4 fotos / MIME inválido / archivo > 5 MB / `fotoPrincipalIndex` fuera de rango |
-| 401 | Token inválido |
-
 ---
 
 ### GET /pets
 
-Lista todas las mascotas donde el usuario autenticado es propietario o cuidador.
+Lista todas las mascotas donde el usuario es propietario o cuidador.
 
 **Autenticación:** 🔒 Privada
-
-**Respuesta exitosa (200):**
-
-```json
-[
-  {
-    "mascotaId": "m1m2m3m4-...",
-    "nombre": "Firulais",
-    "estado": "en_casa",
-    "tipoMascota": { "tipoId": 1, "nombre": "Perro" },
-    "placaQr": {
-      "placaId": "q1q2q3q4-...",
-      "tokenAcceso": "t1t2t3t4-...",
-      "estaActiva": true
-    },
-    "fotos": [
-      { "fotoId": 1, "fotoUrl": "https://res.cloudinary.com/...", "esPrincipal": true }
-    ],
-    "propietarios": [
-      {
-        "personaId": "p1p2p3p4-...",
-        "tipoRelacion": "Dueño Principal",
-        "persona": { "nombre": "Juan", "apellidoPaterno": "Pérez" }
-      }
-    ]
-  }
-]
-```
 
 ---
 
 ### GET /pets/map
 
-Devuelve todas las mascotas del usuario con su última ubicación GPS conocida. Las mascotas sin GPS tienen `lat`/`lng` en `null`.
+Mascotas del usuario con su última ubicación GPS. Las sin GPS tienen `lat`/`lng` en `null`.
 
 **Autenticación:** 🔒 Privada
-
-**Respuesta exitosa (200):**
-
-```json
-[
-  {
-    "mascota_id": "m1m2m3m4-...",
-    "nombre": "Firulais",
-    "estado": "en_paseo",
-    "foto_url": "https://res.cloudinary.com/...",
-    "lat": -17.7863,
-    "lng": -63.1812
-  },
-  {
-    "mascota_id": "m5m6m7m8-...",
-    "nombre": "Pelusa",
-    "estado": "en_casa",
-    "foto_url": null,
-    "lat": null,
-    "lng": null
-  }
-]
-```
 
 ---
 
 ### GET /pets/:id/owners-map
 
-Devuelve todos los propietarios y cuidadores de una mascota con su última ubicación GPS conocida.
+Todos los propietarios de una mascota con su última ubicación GPS.
 
-**Autenticación:** 🔒 Privada (debe ser propietario de la mascota)
+**Autenticación:** 🔒 Privada (debe ser propietario)
 
-**Parámetros de ruta:**
+---
 
-| Parámetro | Tipo | Descripción |
+### PUT /pets/:id/location
+
+Actualiza manualmente la ubicación GPS de la mascota. Útil para establecer posición inicial o al recibir un avistamiento. Emite `pet:location-updated` por WebSocket.
+
+**Autenticación:** 🔒 Privada (debe ser propietario)
+
+**Body:**
+
+```json
+{ "lat": -17.7832, "lng": -63.1821 }
+```
+
+| Campo | Tipo | Validaciones |
 |---|---|---|
-| `id` | UUID | ID de la mascota |
+| `lat` | number | −90 a 90 |
+| `lng` | number | −180 a 180 |
 
 **Respuesta exitosa (200):**
 
 ```json
-[
-  {
-    "persona_id": "p1p2p3p4-...",
-    "nombre": "Juan",
-    "apellido_paterno": "Pérez",
-    "foto_perfil_url": "https://res.cloudinary.com/...",
-    "tipo_relacion": "Dueño Principal",
-    "lat": -17.7863,
-    "lng": -63.1812
-  },
-  {
-    "persona_id": "p5p6p7p8-...",
-    "nombre": "María",
-    "apellido_paterno": "García",
-    "foto_perfil_url": null,
-    "tipo_relacion": "Familiar",
-    "lat": null,
-    "lng": null
-  }
-]
+{ "message": "Ubicación de la mascota actualizada" }
 ```
-
-**Errores:**
-
-| Código | Causa |
-|---|---|
-| 401 | Token inválido |
-| 403 | No eres propietario de esta mascota |
-| 404 | Mascota no encontrada |
 
 ---
 
 ### PUT /pets/:id/status
 
-Cambia el estado de una mascota. Al cambiar a `en_paseo`, la próxima actualización de ubicación del dueño propagará las coordenadas. Al cambiar a `extraviada`, se crea un reporte de extravío.
+Cambia el estado de una mascota. Al cambiar a `extraviada`:
+- Crea un `ReporteExtravio` con la última ubicación conocida (si no hay uno abierto).
+- Envía FCM push a todos los propietarios con `recibeAlertas = true`.
+- Envía FCM push a usuarios cuyas zonas seguras estén en un radio de 5 km.
 
-**Autenticación:** 🔒 Privada (debe ser propietario de la mascota)
-
-**Parámetros de ruta:**
-
-| Parámetro | Tipo | Descripción |
-|---|---|---|
-| `id` | UUID | ID de la mascota |
+**Autenticación:** 🔒 Privada (debe ser propietario)
 
 **Body:**
 
 ```json
-{ "estado": "en_paseo" }
+{ "estado": "extraviada" }
 ```
-
-| Campo | Tipo | Requerido | Validaciones |
-|---|---|---|---|
-| `estado` | enum | Sí | `en_casa`, `en_paseo`, `extraviada`, `recuperada` |
 
 **Respuesta exitosa (200):**
 
@@ -792,34 +712,19 @@ Cambia el estado de una mascota. Al cambiar a `en_paseo`, la próxima actualizac
 {
   "mascotaId": "m1m2m3m4-...",
   "nombre": "Firulais",
-  "estado": "en_paseo"
+  "estado": "extraviada"
 }
 ```
 
-> Emite el evento WebSocket `pet:status-changed` a todos los co-propietarios en el room `pet:{mascotaId}`.
-
-**Errores:**
-
-| Código | Causa |
-|---|---|
-| 400 | Estado inválido |
-| 401 | Token inválido |
-| 403 | No eres propietario de esta mascota |
-| 404 | Mascota no encontrada |
+> Emite el evento WebSocket `pet:status-changed` al room `pet:{mascotaId}`.
 
 ---
 
 ### GET /pets/:id/card
 
-Devuelve la tarjeta pública de una mascota. Usada al escanear el QR de la placa. Muestra propietarios con `mostrarEnQr = true`.
+Perfil público de la mascota. Incluye ficha médica, registros médicos y banner de extravío.
 
-**Autenticación:** 🌐 Pública (no requiere token — accesible desde el QR de la placa)
-
-**Parámetros de ruta:**
-
-| Parámetro | Tipo | Descripción |
-|---|---|---|
-| `id` | UUID | ID de la mascota |
+**Autenticación:** 🌐 Pública
 
 **Respuesta exitosa (200):**
 
@@ -832,9 +737,25 @@ Devuelve la tarjeta pública de una mascota. Usada al escanear el QR de la placa
   "colorPrimario": "Café",
   "rasgosParticulares": "Mancha blanca en la pata derecha",
   "estado": "extraviada",
+  "estaExtraviada": true,
   "fotos": [
-    { "fotoId": 1, "url": "https://res.cloudinary.com/...", "esPrincipal": true },
-    { "fotoId": 2, "url": "https://res.cloudinary.com/...", "esPrincipal": false }
+    { "fotoId": 1, "url": "https://res.cloudinary.com/...", "esPrincipal": true }
+  ],
+  "fichaMedica": {
+    "alergias": "Ninguna",
+    "enfermedadesCronicas": null,
+    "medicacionDiaria": null,
+    "tipoSangre": "DEA 1.1+",
+    "notasVeterinarias": "Control cada 6 meses"
+  },
+  "registrosMedicos": [
+    {
+      "registroId": 3,
+      "tipo": "vacuna",
+      "descripcion": "Vacuna antirrábica anual",
+      "fecha": "2025-03-15",
+      "veterinario": "Dr. Rodríguez"
+    }
   ],
   "propietarios": [
     {
@@ -850,148 +771,39 @@ Devuelve la tarjeta pública de una mascota. Usada al escanear el QR de la placa
 }
 ```
 
-**Errores:**
-
-| Código | Causa |
-|---|---|
-| 404 | Mascota no encontrada |
+> `estaExtraviada: true` — el frontend debe mostrar el banner "¡ESTOY PERDIDO!".
 
 ---
 
 ### GET /pets/:id
 
-Devuelve el detalle completo de una mascota, incluyendo ficha médica y ubicación GPS.
+Detalle completo de una mascota (privado, solo propietarios).
 
-**Autenticación:** 🔒 Privada (debe ser propietario de la mascota)
-
-**Parámetros de ruta:**
-
-| Parámetro | Tipo | Descripción |
-|---|---|---|
-| `id` | UUID | ID de la mascota |
-
-**Respuesta exitosa (200):**
-
-```json
-{
-  "mascotaId": "m1m2m3m4-...",
-  "nombre": "Firulais",
-  "estado": "en_paseo",
-  "tipoMascota": { "tipoId": 1, "nombre": "Perro" },
-  "placaQr": { "placaId": "q1q2-...", "tokenAcceso": "t1t2-...", "estaActiva": true },
-  "fotos": [
-    { "fotoId": 1, "fotoUrl": "https://...", "esPrincipal": true, "creadoEl": "2026-05-11T..." }
-  ],
-  "fichaMedica": {
-    "fichaId": 1,
-    "alergias": "Ninguna",
-    "enfermedadesCronicas": null,
-    "medicacionDiaria": null,
-    "tipoSangre": null,
-    "notasVeterinarias": null
-  },
-  "propietarios": [
-    {
-      "personaId": "p1p2p3p4-...",
-      "tipoRelacion": "Dueño Principal",
-      "persona": {
-        "nombre": "Juan",
-        "apellidoPaterno": "Pérez",
-        "mediosContacto": [{ "tipo": "WhatsApp", "valor": "+591 70123456" }]
-      }
-    }
-  ],
-  "ubicacion": { "lat": -17.7863, "lng": -63.1812 }
-}
-```
-
-**Errores:**
-
-| Código | Causa |
-|---|---|
-| 401 | Token inválido |
-| 403 | No eres propietario de esta mascota |
-| 404 | Mascota no encontrada |
+**Autenticación:** 🔒 Privada
 
 ---
 
 ### PUT /pets/:id
 
-Actualiza los datos de una mascota. Solo se modifican los campos enviados.
+Actualiza datos de la mascota. Solo se modifican los campos enviados.
 
-**Autenticación:** 🔒 Privada (debe ser propietario de la mascota)
-
-**Parámetros de ruta:**
-
-| Parámetro | Tipo | Descripción |
-|---|---|---|
-| `id` | UUID | ID de la mascota |
-
-**Body:**
-
-```json
-{
-  "nombre": "Firulais Jr.",
-  "tipoId": 2,
-  "sexo": "M",
-  "colorPrimario": "Negro",
-  "rasgosParticulares": "Oreja derecha caída"
-}
-```
-
-Todos los campos son opcionales (igual a `POST /pets` sin `fotos`).
-
-**Respuesta exitosa (200):** Objeto `Mascota` actualizado.
-
-**Errores:**
-
-| Código | Causa |
-|---|---|
-| 401 | Token inválido |
-| 403 | No eres propietario de esta mascota |
-| 404 | Mascota no encontrada |
+**Autenticación:** 🔒 Privada (debe ser propietario)
 
 ---
 
 ### DELETE /pets/:id
 
-Elimina una mascota y todo su contenido asociado (fotos, zonas, reportes) en cascada.
+Elimina una mascota y todo su contenido asociado en cascada.
 
-**Autenticación:** 🔒 Privada (debe ser propietario de la mascota)
-
-**Parámetros de ruta:**
-
-| Parámetro | Tipo | Descripción |
-|---|---|---|
-| `id` | UUID | ID de la mascota |
-
-**Respuesta exitosa (200):**
-
-```json
-{ "message": "Mascota eliminada" }
-```
-
-**Errores:**
-
-| Código | Causa |
-|---|---|
-| 401 | Token inválido |
-| 403 | No eres propietario de esta mascota |
-| 404 | Mascota no encontrada |
+**Autenticación:** 🔒 Privada (debe ser propietario)
 
 ---
 
 ### GET /pets/:id/qr
 
-Genera y devuelve el código QR de la placa de la mascota como imagen PNG en formato Base64 (data URL).
+Genera el QR de la placa como imagen PNG en Base64. La URL codificada es `{FRONTEND_URL}/scan/{tokenAcceso}`.
 
-**Autenticación:** 🔒 Privada (debe ser propietario de la mascota)
-
-**Parámetros de ruta:**
-
-| Parámetro | Tipo | Descripción |
-|---|---|---|
-| `id` | UUID | ID de la mascota |
+**Autenticación:** 🔒 Privada (debe ser propietario)
 
 **Respuesta exitosa (200):**
 
@@ -999,29 +811,86 @@ Genera y devuelve el código QR de la placa de la mascota como imagen PNG en for
 data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAADICAYAAACtWK...
 ```
 
-> El QR codifica la URL `{FRONTEND_URL}/scan/{tokenAcceso}`.
+---
+
+### GET /pets/:id/medical
+
+Lista todos los registros médicos de la mascota ordenados por fecha descendente.
+
+**Autenticación:** 🔒 Privada (debe ser propietario)
+
+**Respuesta exitosa (200):**
+
+```json
+[
+  {
+    "registroId": 3,
+    "mascotaId": "m1m2m3m4-...",
+    "tipo": "vacuna",
+    "descripcion": "Vacuna antirrábica anual",
+    "fecha": "2025-03-15T00:00:00.000Z",
+    "veterinario": "Dr. Rodríguez — Clínica Animalitos",
+    "creadoEl": "2025-03-15T14:30:00.000Z"
+  }
+]
+```
+
+---
+
+### POST /pets/:id/medical
+
+Agrega un registro médico (vacuna, consulta, cirugía, tratamiento, desparasitación u otro).
+
+**Autenticación:** 🔒 Privada (debe ser propietario)
+
+**Body:**
+
+```json
+{
+  "tipo": "vacuna",
+  "descripcion": "Vacuna antirrábica anual",
+  "fecha": "2025-03-15",
+  "veterinario": "Dr. Rodríguez — Clínica Animalitos"
+}
+```
+
+| Campo | Tipo | Requerido | Validaciones |
+|---|---|---|---|
+| `tipo` | string | Sí | No vacío, máx. 50 caracteres |
+| `descripcion` | string | Sí | No vacío |
+| `fecha` | string (ISO date) | No | Formato `YYYY-MM-DD` |
+| `veterinario` | string | No | Máx. 150 caracteres |
+
+**Respuesta exitosa (201):** Objeto del registro creado.
 
 **Errores:**
 
 | Código | Causa |
 |---|---|
-| 401 | Token inválido |
 | 403 | No eres propietario de esta mascota |
-| 404 | Mascota o placa QR no encontrada |
+| 404 | Mascota no encontrada |
+
+---
+
+### DELETE /pets/:id/medical/:registroId
+
+Elimina un registro médico.
+
+**Autenticación:** 🔒 Privada (debe ser propietario)
+
+**Respuesta exitosa (200):**
+
+```json
+{ "message": "Registro eliminado" }
+```
 
 ---
 
 ### POST /pets/:id/owners
 
-Agrega un co-propietario o cuidador a una mascota. Si el nuevo propietario tiene sesión activa, su socket se une automáticamente al room `pet:{mascotaId}`.
+Agrega un co-propietario o cuidador.
 
-**Autenticación:** 🔒 Privada (debe ser propietario de la mascota)
-
-**Parámetros de ruta:**
-
-| Parámetro | Tipo | Descripción |
-|---|---|---|
-| `id` | UUID | ID de la mascota |
+**Autenticación:** 🔒 Privada (debe ser propietario)
 
 **Body:**
 
@@ -1034,136 +903,166 @@ Agrega un co-propietario o cuidador a una mascota. Si el nuevo propietario tiene
 }
 ```
 
-| Campo | Tipo | Requerido | Validaciones |
-|---|---|---|---|
-| `personaId` | UUID | Sí | La persona debe existir en el sistema |
-| `tipoRelacion` | enum | No | `Dueño Principal`, `Familiar`, `Cuidador` (default: `Cuidador`) |
-| `recibeAlertas` | boolean | No | Default `true` |
-| `mostrarEnQr` | boolean | No | Default `true` |
-
-**Respuesta exitosa (201):**
-
-```json
-{
-  "personaId": "p5p6p7p8-...",
-  "mascotaId": "m1m2m3m4-...",
-  "tipoRelacion": "Familiar",
-  "recibeAlertas": true,
-  "mostrarEnQr": true,
-  "persona": { "nombre": "María", "apellidoPaterno": "García" }
-}
-```
-
-> Emite los eventos WebSocket `owner:added` y `pet:assigned` a los propietarios del room.
-
-**Errores:**
-
-| Código | Causa |
-|---|---|
-| 400 | La persona ya es propietaria de la mascota |
-| 401 | Token inválido |
-| 403 | No eres propietario de esta mascota |
-| 404 | Mascota o persona no encontrada |
-
 ---
 
 ### DELETE /pets/:id/owners/:personaId
 
-Elimina un co-propietario o cuidador de una mascota. **No se puede eliminar al `Dueño Principal`.**
+Elimina un co-propietario. **No se puede eliminar al `Dueño Principal`.**
 
-**Autenticación:** 🔒 Privada (debe ser propietario de la mascota)
-
-**Parámetros de ruta:**
-
-| Parámetro | Tipo | Descripción |
-|---|---|---|
-| `id` | UUID | ID de la mascota |
-| `personaId` | UUID | ID de la persona a eliminar |
-
-**Respuesta exitosa (200):** Objeto de la relación eliminada.
-
-**Errores:**
-
-| Código | Causa |
-|---|---|
-| 401 | Token inválido |
-| 403 | No eres propietario de esta mascota / Se intenta eliminar al Dueño Principal |
-| 404 | Mascota no encontrada / El propietario indicado no está en la lista |
+**Autenticación:** 🔒 Privada (debe ser propietario)
 
 ---
 
 ### POST /pets/:id/photos
 
-Reemplaza **todas** las fotos actuales de la mascota por las nuevas. Elimina las fotos anteriores de Cloudinary antes de subir las nuevas.
+Reemplaza **todas** las fotos actuales de la mascota (1 a 4 imágenes).
 
-**Autenticación:** 🔒 Privada (debe ser propietario de la mascota)
-
-**Content-Type:** `multipart/form-data`
-
-**Parámetros de ruta:**
-
-| Parámetro | Tipo | Descripción |
-|---|---|---|
-| `id` | UUID | ID de la mascota |
-
-**Campos del formulario:**
-
-| Campo | Tipo | Requerido | Validaciones |
-|---|---|---|---|
-| `fotos` | File[] | Sí | 1 a 4 archivos; jpeg/png/webp/gif; máx. 5 MB cada uno |
-| `fotoPrincipalIndex` | integer | No | Índice 0-based (default: 0) |
-
-**Respuesta exitosa (200):** Array de fotos creadas.
-
-```json
-[
-  { "fotoId": 10, "fotoUrl": "https://res.cloudinary.com/...", "esPrincipal": true },
-  { "fotoId": 11, "fotoUrl": "https://res.cloudinary.com/...", "esPrincipal": false }
-]
-```
-
-**Errores:**
-
-| Código | Causa |
-|---|---|
-| 400 | Sin fotos / más de 4 / MIME inválido / archivo > 5 MB |
-| 401 | Token inválido |
-| 403 | No eres propietario de esta mascota |
-| 404 | Mascota no encontrada |
+**Autenticación:** 🔒 Privada
 
 ---
 
 ### DELETE /pets/:id/photos/:fotoId
 
-Elimina una foto individual de la mascota. No se puede eliminar si es la única foto.
+Elimina una foto individual. No se puede eliminar si es la única.
 
-**Autenticación:** 🔒 Privada (debe ser propietario de la mascota)
+**Autenticación:** 🔒 Privada
+
+---
+
+## 7. API REST — QR Inteligente
+
+Base URL: `/qr` | Todos los endpoints son **públicos** (sin autenticación)
+
+Este módulo es el punto de entrada para quien escanea el QR de una mascota. El flujo típico desde el frontend es:
+
+```
+1. Alguien escanea el QR → navega a {FRONTEND_URL}/scan/{token}
+2. Frontend llama GET /qr/{token} → obtiene perfil completo
+3. Frontend solicita permiso GPS al navegador
+4. Frontend llama POST /qr/{token}/scan con { lat, lng }
+5. Backend guarda el escaneo y envía FCM push al dueño con la ubicación
+```
+
+---
+
+### GET /qr/:token
+
+Devuelve el perfil completo de la mascota a partir del `tokenAcceso` de la placa QR.
+
+**Autenticación:** 🌐 Pública
 
 **Parámetros de ruta:**
 
 | Parámetro | Tipo | Descripción |
 |---|---|---|
-| `id` | UUID | ID de la mascota |
-| `fotoId` | integer | ID de la foto a eliminar |
+| `token` | UUID | `tokenAcceso` de la `PlacaQr` |
 
 **Respuesta exitosa (200):**
 
 ```json
-{ "message": "Foto eliminada" }
+{
+  "mascotaId": "m1m2m3m4-...",
+  "nombre": "Firulais",
+  "tipo": "Perro",
+  "sexo": "M",
+  "colorPrimario": "Café",
+  "rasgosParticulares": "Mancha blanca en la pata derecha",
+  "estado": "extraviada",
+  "estaExtraviada": true,
+  "fotos": [
+    { "fotoId": 1, "url": "https://res.cloudinary.com/...", "esPrincipal": true }
+  ],
+  "fichaMedica": {
+    "alergias": "Polen",
+    "enfermedadesCronicas": null,
+    "medicacionDiaria": null,
+    "tipoSangre": "DEA 1.1+",
+    "notasVeterinarias": null
+  },
+  "registrosMedicos": [
+    {
+      "registroId": 3,
+      "tipo": "vacuna",
+      "descripcion": "Vacuna antirrábica anual",
+      "fecha": "2025-03-15",
+      "veterinario": "Dr. Rodríguez"
+    }
+  ],
+  "propietarios": [
+    {
+      "personaId": "p1p2p3p4-...",
+      "nombreCompleto": "Juan Pérez",
+      "fotoPerfilUrl": "https://res.cloudinary.com/...",
+      "tipoRelacion": "Dueño Principal",
+      "contactos": [
+        { "tipo": "WhatsApp", "valor": "+591 70123456" }
+      ]
+    }
+  ]
+}
 ```
+
+> Solo se muestran propietarios con `mostrarEnQr = true`.
+> `estaExtraviada: true` → mostrar banner "¡ESTOY PERDIDO!" en la UI.
 
 **Errores:**
 
 | Código | Causa |
 |---|---|
-| 400 | Es la única foto de la mascota |
-| 401 | Token inválido |
-| 403 | No eres propietario de esta mascota |
-| 404 | Mascota o foto no encontrada |
+| 404 | Token QR no válido, inactivo o sin mascota asociada |
 
 ---
 
-## 7. API REST — Geofencing
+### POST /qr/:token/scan
+
+Registra un escaneo del QR. Si se envían coordenadas, notifica al dueño por FCM con la ubicación.
+
+**Autenticación:** 🌐 Pública
+
+**Parámetros de ruta:**
+
+| Parámetro | Tipo | Descripción |
+|---|---|---|
+| `token` | UUID | `tokenAcceso` de la `PlacaQr` |
+
+**Body:**
+
+```json
+{
+  "lat": -17.7832,
+  "lng": -63.1821
+}
+```
+
+| Campo | Tipo | Requerido | Validaciones |
+|---|---|---|---|
+| `lat` | number | No | −90 a 90 |
+| `lng` | number | No | −180 a 180 |
+
+> `lat` y `lng` son **opcionales** — el usuario puede denegar el permiso de GPS en el navegador. En ese caso el escaneo se registra sin coordenadas.
+
+**Respuesta exitosa (201):**
+
+```json
+{ "message": "Escaneo registrado" }
+```
+
+**Efecto FCM (si lat/lng presentes):**
+
+El dueño recibe en su app Kotlin:
+- **Título:** `¡Alguien encontró a Firulais!`
+- **Body:** `Se escaneó el QR. Toca para ver la ubicación en el mapa.`
+- **Data:** `{ mascotaId, tipo: "qr_escaneado", lat, lng, mapsUrl }`
+
+**Errores:**
+
+| Código | Causa |
+|---|---|
+| 404 | Token QR no válido o inactivo |
+
+---
+
+## 8. API REST — Geofencing
 
 Base URL: `/geofencing` | Rate limit: **120 req/min (global)**
 
@@ -1171,15 +1070,9 @@ Base URL: `/geofencing` | Rate limit: **120 req/min (global)**
 
 ### POST /geofencing/pets/:petId/zones
 
-Crea una zona segura y la asocia a la mascota indicada en la URL, más las mascotas adicionales del body. El usuario debe ser propietario de **todas** las mascotas indicadas.
+Crea una zona segura y la asocia a la mascota indicada.
 
 **Autenticación:** 🔒 Privada
-
-**Parámetros de ruta:**
-
-| Parámetro | Tipo | Descripción |
-|---|---|---|
-| `petId` | UUID | ID de la mascota principal (debe ser tuya) |
 
 **Body — Zona circular:**
 
@@ -1218,31 +1111,15 @@ Crea una zona segura y la asocia a la mascota indicada en la URL, más las masco
 | `lng` | number | Si `tipo=circulo` | −180 a 180 |
 | `radioMetros` | number | Si `tipo=circulo` | 10 a 50 000 metros |
 | `coordenadas` | CoordDto[] | Si `tipo=poligono` | 3 a 100 puntos `{lat, lng}` |
-| `mascotaIds` | UUID[] | No | Máx. 20 mascotas adicionales; el usuario debe ser propietario de todas |
-
-**Respuesta exitosa (201):** Objeto de la zona creada (mismo formato que `GET /geofencing/zones/:id`).
-
-**Errores:**
-
-| Código | Causa |
-|---|---|
-| 400 | Validación fallida |
-| 401 | Token inválido |
-| 403 | No eres propietario de la mascota principal o de alguna mascota adicional |
+| `mascotaIds` | UUID[] | No | Máx. 20 mascotas adicionales |
 
 ---
 
-### GET /geofencing/pets/:petId/zones
+### GET /geofencing/zones
 
-Lista todas las zonas seguras en las que está registrada una mascota.
+Lista **todas** las zonas seguras del usuario autenticado con sus mascotas asociadas, incluyendo tipo de zona (circulo/poligono) y tipo de mascota.
 
-**Autenticación:** 🔒 Privada (debe ser propietario de la mascota)
-
-**Parámetros de ruta:**
-
-| Parámetro | Tipo | Descripción |
-|---|---|---|
-| `petId` | UUID | ID de la mascota |
+**Autenticación:** 🔒 Privada
 
 **Respuesta exitosa (200):**
 
@@ -1251,28 +1128,49 @@ Lista todas las zonas seguras en las que está registrada una mascota.
   {
     "zona_id": 1,
     "nombre_zona": "Casa",
+    "tipo_zona": "circulo",
     "radio_metros": 200,
-    "esta_activa": true,
     "centro_lat": -17.7863,
     "centro_lng": -63.1812,
-    "mascota_ids": ["m1m2m3m4-...", "m5m6m7m8-..."]
+    "esta_activa": true,
+    "mascotas": [
+      {
+        "mascotaId": "m1m2m3m4-...",
+        "nombre": "Firulais",
+        "estado": "en_casa",
+        "fotoUrl": "https://res.cloudinary.com/...",
+        "tipoMascota": "Perro"
+      }
+    ]
+  },
+  {
+    "zona_id": 2,
+    "nombre_zona": "Parque",
+    "tipo_zona": "poligono",
+    "radio_metros": null,
+    "centro_lat": null,
+    "centro_lng": null,
+    "esta_activa": true,
+    "mascotas": []
   }
 ]
 ```
 
 ---
 
+### GET /geofencing/pets/:petId/zones
+
+Lista las zonas seguras donde está registrada una mascota específica.
+
+**Autenticación:** 🔒 Privada (debe ser propietario)
+
+---
+
 ### GET /geofencing/zones/:id
 
-Devuelve el detalle completo de una zona segura, incluyendo la geometría GeoJSON si es polígono.
+Detalle completo de una zona, incluyendo geometría GeoJSON para polígonos.
 
-**Autenticación:** 🔒 Privada (debe tener al menos una mascota en la zona)
-
-**Parámetros de ruta:**
-
-| Parámetro | Tipo | Descripción |
-|---|---|---|
-| `id` | integer | ID de la zona |
+**Autenticación:** 🔒 Privada
 
 **Respuesta exitosa (200):**
 
@@ -1289,84 +1187,27 @@ Devuelve el detalle completo de una zona segura, incluyendo la geometría GeoJSO
 }
 ```
 
-> Para zonas poligonales, `geometria_geojson` contiene un objeto GeoJSON `Polygon` y `radio_metros` es `null`.
-
-**Errores:**
-
-| Código | Causa |
-|---|---|
-| 401 | Token inválido |
-| 403 | No tienes ninguna mascota en esta zona |
-| 404 | Zona no encontrada |
+> Para polígonos: `geometria_geojson` contiene un `GeoJSON Polygon` y `radio_metros` es `null`.
 
 ---
 
 ### PUT /geofencing/zones/:id
 
-Actualiza el nombre o la geometría de una zona segura.
+Actualiza el nombre o geometría de una zona.
 
-**Autenticación:** 🔒 Privada (debe tener al menos una mascota en la zona)
-
-**Parámetros de ruta:**
-
-| Parámetro | Tipo | Descripción |
-|---|---|---|
-| `id` | integer | ID de la zona |
-
-**Body:**
-
-```json
-{
-  "nombreZona": "Casa Nueva",
-  "tipo": "circulo",
-  "lat": -17.79,
-  "lng": -63.19,
-  "radioMetros": 300
-}
-```
-
-Todos los campos son opcionales. Solo se actualizan los campos enviados.
-
-**Respuesta exitosa (200):** Objeto de la zona actualizada.
-
-**Errores:**
-
-| Código | Causa |
-|---|---|
-| 401 | Token inválido |
-| 403 | No tienes acceso a esta zona |
-| 404 | Zona no encontrada |
+**Autenticación:** 🔒 Privada
 
 ---
 
 ### DELETE /geofencing/zones/:id
 
-Elimina una zona segura y todos sus registros de visitas asociados en cascada.
+Elimina una zona y sus registros de visitas en cascada.
 
-**Autenticación:** 🔒 Privada (debe tener al menos una mascota en la zona)
-
-**Parámetros de ruta:**
-
-| Parámetro | Tipo | Descripción |
-|---|---|---|
-| `id` | integer | ID de la zona |
-
-**Respuesta exitosa (200):**
-
-```json
-{ "message": "Zona eliminada" }
-```
-
-**Errores:**
-
-| Código | Causa |
-|---|---|
-| 401 | Token inválido |
-| 403 | No tienes acceso a esta zona |
+**Autenticación:** 🔒 Privada
 
 ---
 
-## 8. API REST — Tipos de Mascota
+## 9. API REST — Tipos de Mascota
 
 Base URL: `/tipos-mascota`
 
@@ -1374,9 +1215,9 @@ Base URL: `/tipos-mascota`
 
 ### GET /tipos-mascota
 
-Lista todos los tipos de mascota disponibles en el sistema (catálogo).
+Lista el catálogo de tipos de mascota.
 
-**Autenticación:** 🌐 Pública (no requiere token — se usa al registrar una mascota sin estar autenticado aún)
+**Autenticación:** 🌐 Pública
 
 **Respuesta exitosa (200):**
 
@@ -1391,7 +1232,55 @@ Lista todos los tipos de mascota disponibles en el sistema (catálogo).
 
 ---
 
-## 9. API REST — Mapa
+### POST /tipos-mascota
+
+Crea un nuevo tipo de mascota. Solo administradores.
+
+**Autenticación:** 🔒 Privada + rol `admin`
+
+**Body:**
+
+```json
+{ "nombre": "Hurón" }
+```
+
+**Respuesta exitosa (201):**
+
+```json
+{ "tipoId": 5, "nombre": "Hurón" }
+```
+
+**Errores:**
+
+| Código | Causa |
+|---|---|
+| 403 | No tienes rol admin |
+| 409 | El tipo ya existe |
+
+---
+
+### DELETE /tipos-mascota/:id
+
+Elimina un tipo de mascota. Solo administradores.
+
+**Autenticación:** 🔒 Privada + rol `admin`
+
+**Respuesta exitosa (200):**
+
+```json
+{ "message": "Tipo eliminado" }
+```
+
+**Errores:**
+
+| Código | Causa |
+|---|---|
+| 403 | No tienes rol admin |
+| 404 | Tipo no encontrado |
+
+---
+
+## 10. API REST — Mapa
 
 Base URL: `/map`
 
@@ -1399,10 +1288,10 @@ Base URL: `/map`
 
 ### GET /map/snapshot
 
-Carga inicial del mapa para el usuario autenticado. Devuelve en una sola llamada toda la información geoespacial necesaria:
+Carga inicial del mapa. Devuelve en una sola llamada:
 - Co-propietarios y cuidadores con GPS activo.
-- Mascotas con reporte de extravío abierto (máx. 50 más recientes).
-- Zonas seguras del usuario con las mascotas asociadas.
+- Mascotas con reporte de extravío abierto (máx. 50, con coordenadas).
+- Zonas seguras del usuario con las mascotas asociadas y sus coordenadas GPS.
 
 **Autenticación:** 🔒 Privada
 
@@ -1444,31 +1333,24 @@ Carga inicial del mapa para el usuario autenticado. Devuelve en una sola llamada
           "mascotaId": "m1m2m3m4-...",
           "nombre": "Firulais",
           "estado": "en_casa",
-          "fotoUrl": "https://res.cloudinary.com/..."
+          "fotoUrl": "https://res.cloudinary.com/...",
+          "ubicacion": { "lat": -17.7863, "lng": -63.1812 }
         }
       ]
-    },
-    {
-      "zonaId": 2,
-      "nombre": "Parque",
-      "tipo": "poligono",
-      "geometria": {
-        "type": "Polygon",
-        "coordinates": [[[-63.180, -17.785], [-63.182, -17.786], [-63.179, -17.787], [-63.180, -17.785]]]
-      },
-      "mascotas": []
     }
   ]
 }
 ```
 
+> `mascota.ubicacion` es `null` si la mascota no tiene coordenadas GPS registradas.
+
 ---
 
 ### GET /map/public/lost-pets
 
-Lista las últimas 100 mascotas con reporte de extravío abierto y ubicación GPS conocida. Endpoint para mostrar en la pantalla pública de la app sin requerir login.
+Mascotas con reporte de extravío abierto y ubicación GPS conocida. Sin autenticación.
 
-**Autenticación:** 🌐 Pública (no requiere token)
+**Autenticación:** 🌐 Pública
 
 **Respuesta exitosa (200):**
 
@@ -1487,11 +1369,11 @@ Lista las últimas 100 mascotas con reporte de extravío abierto y ubicación GP
 ]
 ```
 
-> Solo aparecen mascotas con `estado_reporte = 'abierto'` y `ultima_ubicacion_conocida IS NOT NULL`.
+> Máximo 100 resultados. Solo mascotas con `estado_reporte = 'abierto'` y ubicación conocida.
 
 ---
 
-## 10. WebSocket — Tiempo Real
+## 11. WebSocket — Tiempo Real
 
 ### Configuración de conexión
 
@@ -1502,45 +1384,29 @@ Lista las últimas 100 mascotas con reporte de extravío abierto y ubicación GP
 | Protocolo | Socket.io v4 |
 | Autenticación | JWT Bearer en el handshake |
 
-**Ejemplo de conexión (cliente JavaScript):**
+**Ejemplo de conexión (Kotlin):**
 
-```javascript
-import { io } from 'socket.io-client';
-
-const socket = io('http://localhost:3000/realtime', {
-  auth: {
-    token: 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...'
-  }
-});
-
-socket.on('connect', () => console.log('Conectado al servidor PetFinder'));
-socket.on('connect_error', (err) => console.error('Error de conexión:', err.message));
+```kotlin
+val socket = IO.socket("http://localhost:3000/realtime", IO.Options().apply {
+    auth = mapOf("token" to "Bearer $accessToken")
+})
 ```
-
-> Si el token está ausente o es inválido, el servidor rechaza la conexión inmediatamente con `disconnect(true)`.
 
 ---
 
-### Estructura de Rooms
-
-Al conectarse, el servidor une automáticamente el socket del usuario a los siguientes rooms:
+### Rooms
 
 | Room | Propósito |
 |---|---|
-| `pet:{mascotaId}` | Uno por cada mascota donde el usuario es propietario o cuidador. Recibe eventos de la mascota. |
-| `user:{usuarioId}` | Room personal. Recibe notificaciones directas al usuario. |
-
-Los rooms se mantienen actualizados automáticamente cuando:
-- Se agrega un co-propietario → el nuevo propietario se une a `pet:{mascotaId}`.
-- Se registra una nueva mascota → el creador se une a `pet:{nuevaMascotaId}`.
+| `pet:{mascotaId}` | Eventos de la mascota (ubicación, estado, zonas) |
+| `user:{usuarioId}` | Notificaciones directas al usuario |
 
 ---
 
-### Catálogo de Eventos del Servidor
+### Catálogo de Eventos
 
 #### `pet:location-updated`
-
-Emitido cuando se actualiza la ubicación de una mascota en estado `en_paseo`. Se envía al room `pet:{mascotaId}`.
+Cuando se actualiza la ubicación de una mascota `en_paseo`.
 
 ```json
 {
@@ -1552,13 +1418,8 @@ Emitido cuando se actualiza la ubicación de una mascota en estado `en_paseo`. S
 }
 ```
 
-**Disparador:** `PUT /users/me/location` cuando el usuario tiene mascotas `en_paseo`.
-
----
-
 #### `owner:location-updated`
-
-Emitido cuando el dueño actualiza su ubicación. Permite a los co-propietarios ver el marcador del dueño moverse en el mapa. Se envía a todos los rooms `pet:{mascotaId}` del usuario.
+Cuando el dueño actualiza su posición.
 
 ```json
 {
@@ -1570,13 +1431,8 @@ Emitido cuando el dueño actualiza su ubicación. Permite a los co-propietarios 
 }
 ```
 
-**Disparador:** `PUT /users/me/location`.
-
----
-
 #### `pet:status-changed`
-
-Emitido cuando el estado de una mascota cambia. Se envía al room `pet:{mascotaId}`.
+Cuando el estado de la mascota cambia.
 
 ```json
 {
@@ -1587,13 +1443,8 @@ Emitido cuando el estado de una mascota cambia. Se envía al room `pet:{mascotaI
 }
 ```
 
-**Disparador:** `PUT /pets/:id/status`.
-
----
-
 #### `pet:registered`
-
-Emitido al creador cuando registra una nueva mascota. Se envía al room personal `user:{usuarioId}`.
+Al creador cuando registra una nueva mascota.
 
 ```json
 {
@@ -1604,13 +1455,8 @@ Emitido al creador cuando registra una nueva mascota. Se envía al room personal
 }
 ```
 
-**Disparador:** `POST /pets`.
-
----
-
 #### `pet:assigned`
-
-Emitido al nuevo propietario cuando es agregado a una mascota. Se envía a su room personal `user:{usuarioId}`.
+Al nuevo propietario cuando es agregado a una mascota.
 
 ```json
 {
@@ -1621,14 +1467,9 @@ Emitido al nuevo propietario cuando es agregado a una mascota. Se envía a su ro
   "fechaAgregado": "2026-05-11T10:00:00.000Z"
 }
 ```
-
-**Disparador:** `POST /pets/:id/owners`.
-
----
 
 #### `owner:added`
-
-Emitido a todos los propietarios existentes cuando se agrega un nuevo co-propietario. Se envía al room `pet:{mascotaId}`.
+A todos los propietarios cuando se agrega un nuevo co-propietario.
 
 ```json
 {
@@ -1640,13 +1481,8 @@ Emitido a todos los propietarios existentes cuando se agrega un nuevo co-propiet
 }
 ```
 
-**Disparador:** `POST /pets/:id/owners`.
-
----
-
 #### `pet:entered-zone`
-
-Emitido cuando una mascota entra a una zona segura. Se envía al room `pet:{mascotaId}`.
+Cuando una mascota entra a una zona segura.
 
 ```json
 {
@@ -1656,13 +1492,8 @@ Emitido cuando una mascota entra a una zona segura. Se envía al room `pet:{masc
 }
 ```
 
-**Disparador:** `PUT /users/me/location` cuando la mascota cruza el límite de una zona registrada.
-
----
-
 #### `pet:exited-zone`
-
-Emitido cuando una mascota sale de una zona segura. Incluye la duración de la visita. Se envía al room `pet:{mascotaId}`.
+Cuando una mascota sale de una zona segura.
 
 ```json
 {
@@ -1673,11 +1504,9 @@ Emitido cuando una mascota sale de una zona segura. Incluye la duración de la v
 }
 ```
 
-**Disparador:** `PUT /users/me/location` cuando la mascota sale del límite de una zona registrada.
-
 ---
 
-## 11. Geofencing — Lógica Espacial
+## 12. Geofencing — Lógica Espacial
 
 ### Tipos de zona
 
@@ -1709,52 +1538,139 @@ Cada vez que el dueño llama `PUT /users/me/location`:
         → Emite pet:exited-zone con duracionMinutos
 ```
 
-### Invariante física
-
-Una mascota puede estar **registrada** en múltiples zonas (ej. casa + parque + trabajo del dueño). Sin embargo, sus coordenadas GPS solo pueden corresponder a una zona física a la vez, garantizado por la naturaleza de PostGIS, no por restricciones de base de datos.
-
 ---
 
-## 12. Gestión de Fotos
+## 13. Gestión de Fotos
 
 ### Restricciones
 
 | Restricción | Valor |
 |---|---|
 | Máximo fotos por mascota | 4 |
-| Mínimo fotos por mascota | 1 (no se puede borrar la única foto) |
+| Mínimo fotos por mascota | 1 |
 | Formatos aceptados | `image/jpeg`, `image/png`, `image/webp`, `image/gif` |
 | Tamaño máximo por archivo | 5 MB |
+| Carpeta Cloudinary mascotas | `mascotas/{mascotaId}/` |
+| Carpeta Cloudinary perfil | `personas/{personaId}/` |
 
-### Flujo de subida
-
-1. Las fotos se envían como `multipart/form-data` al endpoint.
-2. Se validan MIME y tamaño **antes** de tocar Cloudinary.
-3. Se suben a Cloudinary en la carpeta `mascotas/{mascotaId}/`.
-4. Se insertan los registros en `fotos_mascota` con la URL de Cloudinary.
-5. Se marca como `esPrincipal = true` la foto en el índice `fotoPrincipalIndex`.
-
-### Flujo de reemplazo (`POST /pets/:id/photos`)
+### Flujo de reemplazo de fotos de mascota
 
 1. Se eliminan **todas** las fotos anteriores de Cloudinary.
 2. Se hace `DELETE` en `fotos_mascota`.
-3. Se suben las nuevas fotos.
-4. Se insertan los nuevos registros.
+3. Se suben las nuevas fotos en paralelo.
+4. Se insertan los nuevos registros con `esPrincipal` en el índice indicado.
 
-> Si la eliminación de Cloudinary falla en alguna foto, el proceso continúa de todas formas para no bloquear al usuario.
+### Flujo de foto de perfil de usuario
+
+1. Si ya tenía `fotoPerfilUrl` → se elimina de Cloudinary.
+2. Se sube la nueva foto a `personas/{personaId}/`.
+3. Se actualiza `persona.fotoPerfilUrl` en la BD.
 
 ---
 
-## 13. Seguridad y Rate Limiting
+## 14. Push Notifications — FCM
+
+El sistema usa **Firebase Admin SDK** para enviar push notifications a la app Kotlin de los dueños.
+
+### Inicialización
+
+Firebase se inicializa en `onModuleInit`. Si faltan las variables de entorno (`FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY`), el módulo registra un warning y continúa sin push notifications (no crashea la app).
+
+### Tipos de alerta
+
+#### `mascota_extraviada`
+
+**Trigger:** `PUT /pets/:id/status` con `estado = extraviada` (primer reporte).
+
+**Destinatarios:** Todos los propietarios con `recibeAlertas = true` y `tokenFcm` registrado.
+
+```json
+{
+  "notification": {
+    "title": "¡Firulais está desaparecida!",
+    "body": "Activa la búsqueda y revisa su última ubicación conocida."
+  },
+  "data": { "mascotaId": "m1m2m3m4-...", "tipo": "mascota_extraviada" }
+}
+```
+
+#### `qr_escaneado`
+
+**Trigger:** `POST /qr/:token/scan` con coordenadas GPS.
+
+**Destinatarios:** Todos los propietarios con `recibeAlertas = true` y `tokenFcm` registrado.
+
+```json
+{
+  "notification": {
+    "title": "¡Alguien encontró a Firulais!",
+    "body": "Se escaneó el QR. Toca para ver la ubicación en el mapa."
+  },
+  "data": {
+    "mascotaId": "m1m2m3m4-...",
+    "tipo": "qr_escaneado",
+    "lat": "-17.7832",
+    "lng": "-63.1821",
+    "mapsUrl": "https://maps.google.com/?q=-17.7832,-63.1821"
+  }
+}
+```
+
+#### `mascota_en_zona`
+
+**Trigger:** `PUT /pets/:id/status` con `estado = extraviada` (primer reporte con coordenadas).
+
+**Destinatarios:** Usuarios cuyas zonas seguras estén en un radio de 5 km de la última ubicación conocida de la mascota perdida (excluye a los propietarios de la mascota perdida, que ya reciben `mascota_extraviada`).
+
+```json
+{
+  "notification": {
+    "title": "¡Mascota perdida cerca de tu zona!",
+    "body": "Firulais está extraviada cerca de tu área. ¿Puedes ayudar?"
+  },
+  "data": {
+    "mascotaId": "m1m2m3m4-...",
+    "tipo": "mascota_en_zona",
+    "lat": "-17.7832",
+    "lng": "-63.1821"
+  }
+}
+```
+
+### Registro del token FCM en la app Kotlin
+
+```kotlin
+FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
+    val token = task.result
+    // Enviar al backend:
+    api.updateFcmToken(token)
+}
+```
+
+El backend recibe el token en `PUT /users/me` o en un endpoint dedicado (actualizar `usuario.tokenFcm`).
+
+---
+
+## 15. Seguridad y Rate Limiting
 
 ### JWT
 
 | Propiedad | Valor |
 |---|---|
 | Algoritmo | HS256 |
-| Duración | 24 h (configurable via `JWT_EXPIRES_IN`) |
-| Payload | `{ sub: usuarioId, personaId }` |
+| Duración access token | 15 min (configurable via `JWT_EXPIRES_IN`) |
+| Duración refresh token | 30 días (UUID almacenado como hash bcrypt en BD) |
+| Payload | `{ sub: usuarioId, personaId, rol }` |
 | Header requerido | `Authorization: Bearer <token>` |
+
+### Roles
+
+| Rol | Acceso |
+|---|---|
+| `usuario` | Sus propios recursos (mascotas, zonas, contactos, ubicación) |
+| `admin` | Todo lo anterior + gestión del catálogo de tipos de mascota |
+
+Los endpoints de admin usan `@Roles('admin')` + `RolesGuard`. El rol se lee del JWT payload (no requiere query a BD).
 
 ### Rate Limiting (Throttler)
 
@@ -1763,30 +1679,22 @@ Una mascota puede estar **registrada** en múltiples zonas (ej. casa + parque + 
 | Global (todos los endpoints) | 120 req/min por IP |
 | Auth endpoints (`/auth/*`) | 10 req/min por IP |
 
-### Ownership checks
-
-Todos los endpoints que operan sobre recursos específicos verifican que el usuario sea propietario:
-
-| Módulo | Verificación |
-|---|---|
-| Mascotas | `propietarios_mascota WHERE persona_id = :personaId AND mascota_id = :mascotaId` |
-| Fotos | Implícita a través de la verificación de mascota |
-| Zonas | `zona_mascotas JOIN propietarios_mascota WHERE persona_id = :personaId` |
-| Contactos | `medios_contacto.persona_id = usuario.persona_id` |
-
 ### Endpoints públicos (sin token)
 
 | Método | Ruta | Descripción |
 |---|---|---|
 | POST | `/auth/register` | Registro de cuenta |
 | POST | `/auth/login` | Login |
+| POST | `/auth/refresh` | Renovar tokens |
+| GET | `/auth/google` | Iniciar OAuth Google |
+| GET | `/auth/google/callback` | Callback OAuth Google |
 | GET | `/tipos-mascota` | Catálogo de tipos |
-| GET | `/pets/:id/card` | Tarjeta pública de mascota (escaneo QR) |
+| GET | `/pets/:id/card` | Tarjeta pública de mascota |
 | GET | `/map/public/lost-pets` | Mascotas perdidas (mapa público) |
+| GET | `/qr/:token` | Perfil de mascota por token QR |
+| POST | `/qr/:token/scan` | Registrar escaneo QR con GPS |
 
 ### Filtro de excepciones de Prisma
-
-Los errores de base de datos se mapean automáticamente a respuestas HTTP legibles:
 
 | Código Prisma | HTTP | Mensaje |
 |---|---|---|
@@ -1797,13 +1705,15 @@ Los errores de base de datos se mapean automáticamente a respuestas HTTP legibl
 
 ---
 
-## 14. Historial de Migraciones
+## 16. Historial de Migraciones
 
 | Fecha | Nombre | Cambios |
 |---|---|---|
-| 2026-05-01 | `init_petfinder_limpio` | Schema inicial: personas, usuarios, mascotas, razas, placas QR, zonas, historial |
-| 2026-05-02 | `petfinder_schema_final_v2` | Columnas renombradas a snake_case; campos PostGIS de ubicación; enums en minúsculas; secuencia para historial |
-| 2026-05-07 | `cambio_razas_a_tipo_mascota` | Elimina tabla `razas`; crea `tipos_mascota` como catálogo reemplazable |
-| 2026-05-07 | `ajuste_relaciones_final` | Refactoriza `zona_mascota` a tabla many-to-many; una mascota puede estar registrada en múltiples zonas |
-| 2026-05-11 | `one_zone_per_pet` | ~~Intento de UNIQUE en mascota_id~~ — aplicado y revertido en la siguiente migración |
-| 2026-05-11 | `revert_one_zone_per_pet` | `DROP INDEX zona_mascotas_mascota_id_key` — la presencia física en una sola zona se garantiza via PostGIS, no via constraint de BD |
+| 2026-05-01 | `init_petfinder_limpio` | Schema inicial: personas, usuarios, mascotas, placas QR, zonas, historial |
+| 2026-05-02 | `petfinder_schema_final_v2` | Columnas a snake_case; campos PostGIS; enums en minúsculas |
+| 2026-05-07 | `cambio_razas_a_tipo_mascota` | Elimina `razas`; crea `tipos_mascota` como catálogo |
+| 2026-05-07 | `ajuste_relaciones_final` | `zona_mascota` como many-to-many; una mascota puede estar en múltiples zonas |
+| 2026-05-11 | `one_zone_per_pet` | ~~UNIQUE en mascota_id~~ — aplicado y revertido |
+| 2026-05-11 | `revert_one_zone_per_pet` | `DROP INDEX zona_mascotas_mascota_id_key` |
+| 2026-05-17 | `add_refresh_token_and_rol` | Agrega `refresh_token_hash` y enum `rol_usuario` + campo `rol` a `usuarios` |
+| 2026-05-17 | `add_registro_medico_and_escaneo_qr` | Crea tablas `registros_medicos` y `escaneos_qr` para ficha médica y escaneos QR con GPS |

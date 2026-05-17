@@ -10,7 +10,9 @@ import * as QRCode from 'qrcode';
 import { CloudinaryService } from '../../cloudinary/cloudinary.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RealtimeService } from '../../infrastructure/realtime/realtime.service';
+import { NotificationsService } from '../../infrastructure/notifications/notifications.service';
 import { AddOwnerDto } from './dto/add-owner.dto';
+import { CreateMedicalRecordDto } from './dto/create-medical-record.dto';
 import { CreatePetDto } from './dto/create-pet.dto';
 import { UpdatePetDto } from './dto/update-pet.dto';
 import { EstadoMascota, RelacionPropietario } from '@prisma/client';
@@ -27,6 +29,7 @@ export class PetsService {
     private readonly config: ConfigService,
     private readonly cloudinary: CloudinaryService,
     private readonly realtime: RealtimeService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async create(
@@ -305,6 +308,10 @@ export class PetsService {
           FROM mascotas
           WHERE mascota_id = ${mascotaId}::uuid
         `;
+
+        // Notificar a propietarios y a usuarios cercanos en sus zonas seguras
+        void this.notifications.sendPetLostAlert(mascotaId);
+        void this.notifications.sendZoneAlert(mascotaId);
       }
     } else {
       // Cierra cualquier reporte abierto al recuperar o cambiar estado
@@ -368,6 +375,25 @@ export class PetsService {
           select: { fotoId: true, fotoUrl: true, esPrincipal: true },
           orderBy: [{ esPrincipal: 'desc' }, { fotoId: 'asc' }],
         },
+        fichaMedica: {
+          select: {
+            alergias: true,
+            enfermedadesCronicas: true,
+            medicacionDiaria: true,
+            tipoSangre: true,
+            notasVeterinarias: true,
+          },
+        },
+        registrosMedicos: {
+          select: {
+            registroId: true,
+            tipo: true,
+            descripcion: true,
+            fecha: true,
+            veterinario: true,
+          },
+          orderBy: { fecha: 'desc' },
+        },
         propietarios: {
           select: {
             tipoRelacion: true,
@@ -395,11 +421,14 @@ export class PetsService {
       colorPrimario: mascota.colorPrimario,
       rasgosParticulares: mascota.rasgosParticulares,
       estado: mascota.estado,
+      estaExtraviada: mascota.estado === EstadoMascota.extraviada,
       fotos: mascota.fotos.map((f) => ({
         fotoId: f.fotoId,
         url: f.fotoUrl,
         esPrincipal: f.esPrincipal ?? false,
       })),
+      fichaMedica: mascota.fichaMedica ?? null,
+      registrosMedicos: mascota.registrosMedicos,
       propietarios: mascota.propietarios
         .filter((p) => p.mostrarEnQr !== false)
         .map((p) => ({
@@ -410,6 +439,55 @@ export class PetsService {
           contactos: p.persona.mediosContacto.map((c) => ({ tipo: c.tipo, valor: c.valor })),
         })),
     };
+  }
+
+  async getMedicalRecords(mascotaId: string, personaId: string) {
+    const mascota = await this.prisma.mascota.findUnique({
+      where: { mascotaId },
+      include: { propietarios: true },
+    });
+    if (!mascota) throw new NotFoundException('Mascota no encontrada');
+    this.checkOwnership(mascota, personaId);
+
+    return this.prisma.registroMedico.findMany({
+      where: { mascotaId },
+      orderBy: [{ fecha: 'desc' }, { registroId: 'desc' }],
+    });
+  }
+
+  async addMedicalRecord(mascotaId: string, personaId: string, dto: CreateMedicalRecordDto) {
+    const mascota = await this.prisma.mascota.findUnique({
+      where: { mascotaId },
+      include: { propietarios: true },
+    });
+    if (!mascota) throw new NotFoundException('Mascota no encontrada');
+    this.checkOwnership(mascota, personaId);
+
+    return this.prisma.registroMedico.create({
+      data: {
+        mascotaId,
+        tipo: dto.tipo,
+        descripcion: dto.descripcion,
+        fecha: dto.fecha ? new Date(dto.fecha) : null,
+        veterinario: dto.veterinario ?? null,
+      },
+    });
+  }
+
+  async removeMedicalRecord(mascotaId: string, personaId: string, registroId: number) {
+    const mascota = await this.prisma.mascota.findUnique({
+      where: { mascotaId },
+      include: { propietarios: true },
+    });
+    if (!mascota) throw new NotFoundException('Mascota no encontrada');
+    this.checkOwnership(mascota, personaId);
+
+    const registro = await this.prisma.registroMedico.findUnique({ where: { registroId } });
+    if (!registro || registro.mascotaId !== mascotaId)
+      throw new NotFoundException('Registro médico no encontrado');
+
+    await this.prisma.registroMedico.delete({ where: { registroId } });
+    return { message: 'Registro eliminado' };
   }
 
   // #31 — todas las mascotas del dueño con o sin GPS + foto principal para el marcador

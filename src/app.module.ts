@@ -9,12 +9,14 @@ import { AppService } from './app.service';
 import { CloudinaryModule } from './cloudinary/cloudinary.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { RealtimeModule } from './infrastructure/realtime/realtime.module';
+import { NotificationsModule } from './infrastructure/notifications/notifications.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
 import { PetsModule } from './modules/pets/pets.module';
 import { GeofencingModule } from './modules/geofencing/geofencing.module';
 import { TiposMascotaModule } from './modules/tipos-mascota/tipos-mascota.module';
 import { MapModule } from './modules/map/map.module';
+import { QrModule } from './modules/qr/qr.module';
 
 @Module({
   imports: [
@@ -35,6 +37,7 @@ import { MapModule } from './modules/map/map.module';
     ThrottlerModule.forRoot([{ ttl: 60000, limit: 120 }]),
     PrismaModule,
     RealtimeModule,
+    NotificationsModule,
     CloudinaryModule,
     AuthModule,
     UsersModule,
@@ -42,6 +45,7 @@ import { MapModule } from './modules/map/map.module';
     GeofencingModule,
     TiposMascotaModule,
     MapModule,
+    QrModule,
   ],
   controllers: [AppController],
   providers: [

@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -8,8 +9,13 @@ import {
   Put,
   Post,
   Query,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiBody, ApiConsumes } from '@nestjs/swagger';
+import { memoryStorage } from 'multer';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UsersService } from './users.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
@@ -35,6 +41,36 @@ export class UsersController {
   @ApiOperation({ summary: 'Actualizar datos biográficos' })
   updateMe(@CurrentUser('sub') usuarioId: string, @Body() dto: UpdateProfileDto) {
     return this.usersService.updateProfile(usuarioId, dto);
+  }
+
+  @Put('me/photo')
+  @ApiOperation({ summary: 'Actualizar foto de perfil' })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['foto'],
+      properties: {
+        foto: {
+          type: 'string',
+          format: 'binary',
+          description: 'Imagen (jpeg, png, webp — máx. 5 MB)',
+        },
+      },
+    },
+  })
+  @UseInterceptors(
+    FileInterceptor('foto', {
+      storage: memoryStorage(),
+      limits: { fileSize: 5 * 1024 * 1024 },
+      fileFilter: (_req, file, cb) => {
+        if (file.mimetype.startsWith('image/')) cb(null, true);
+        else cb(new BadRequestException('Solo se permiten imágenes'), false);
+      },
+    }),
+  )
+  updatePhoto(@CurrentUser('sub') usuarioId: string, @UploadedFile() file: Express.Multer.File) {
+    return this.usersService.updateProfilePhoto(usuarioId, file);
   }
 
   @Post('me/contacts')

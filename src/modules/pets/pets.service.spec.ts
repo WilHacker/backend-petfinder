@@ -4,6 +4,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { RelacionPropietario } from '@prisma/client';
 import { CloudinaryService } from '../../cloudinary/cloudinary.service';
 import { RealtimeService } from '../../infrastructure/realtime/realtime.service';
+import { NotificationsService } from '../../infrastructure/notifications/notifications.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PetsService } from './pets.service';
 
@@ -107,6 +108,10 @@ const mockRealtime = {
   emitPetLocationUpdated: jest.fn(),
 };
 
+const mockNotifications = {
+  sendPetLostAlert: jest.fn().mockResolvedValue(undefined),
+};
+
 describe('PetsService', () => {
   let service: PetsService;
 
@@ -120,6 +125,7 @@ describe('PetsService', () => {
         { provide: ConfigService, useValue: mockConfig },
         { provide: CloudinaryService, useValue: mockCloudinary },
         { provide: RealtimeService, useValue: mockRealtime },
+        { provide: NotificationsService, useValue: mockNotifications },
       ],
     }).compile();
 

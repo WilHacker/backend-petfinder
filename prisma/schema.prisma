@@ -36,6 +36,13 @@ enum RelacionPropietario {
   @@map("relacion_propietario")
 }
 
+enum RolUsuario {
+  usuario
+  admin
+
+  @@map("rol_usuario")
+}
+
 // =============================================================================
 // MÓDULO 1: IDENTIDAD Y USUARIOS
 // =============================================================================
@@ -72,6 +79,8 @@ model Usuario {
   
   ultimoAcceso            DateTime? @map("ultimo_acceso") @db.Timestamptz
   estadoCuenta            String?   @default("activa") @map("estado_cuenta") @db.VarChar(20)
+  refreshTokenHash        String?   @map("refresh_token_hash")
+  rol                     RolUsuario @default(usuario) @map("rol")
 
   // Relaciones
   persona                 Persona   @relation(fields: [personaId], references: [personaId], onDelete: Cascade)
@@ -127,6 +136,8 @@ model Mascota {
   placaQr             PlacaQr?
   zonasSeguras        ZonaMascota[]
   registroVisitas     RegistroVisitaZona[]
+  registrosMedicos    RegistroMedico[]
+  escaneos            EscaneoQr[]
   reportesExtravio    ReporteExtravio[]
   avistamientos       Avistamiento[]
 
@@ -243,6 +254,32 @@ model RegistroVisitaZona {
   zona    ZonaSegura? @relation(fields: [zonaId], references: [zonaId], onDelete: Cascade)
 
   @@map("registro_visitas_zonas")
+}
+
+model RegistroMedico {
+  registroId  Int       @id @default(autoincrement()) @map("registro_id")
+  mascotaId   String    @map("mascota_id") @db.Uuid
+  tipo        String    @db.VarChar(50)
+  descripcion String
+  fecha       DateTime? @db.Date
+  veterinario String?   @db.VarChar(150)
+  creadoEl    DateTime? @default(now()) @map("creado_el") @db.Timestamptz
+
+  mascota Mascota @relation(fields: [mascotaId], references: [mascotaId], onDelete: Cascade)
+
+  @@map("registros_medicos")
+}
+
+model EscaneoQr {
+  escaneoId   Int       @id @default(autoincrement()) @map("escaneo_id")
+  mascotaId   String    @map("mascota_id") @db.Uuid
+  lat         Float?
+  lng         Float?
+  escaneadoEl DateTime  @default(now()) @map("escaneado_el") @db.Timestamptz
+
+  mascota Mascota @relation(fields: [mascotaId], references: [mascotaId], onDelete: Cascade)
+
+  @@map("escaneos_qr")
 }
 
 // =============================================================================
