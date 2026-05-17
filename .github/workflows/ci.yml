@@ -78,9 +78,10 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Verificar que la imagen arranca
+      - name: Verificar que la imagen arranca (smoke test)
         run: |
-          docker run --rm -d \
+          # Arranca SIN --rm para poder inspeccionar logs aunque muera
+          docker run -d \
             --name petfinder-test \
             -e NODE_ENV=production \
             -e PORT=3000 \
@@ -92,14 +93,27 @@ jobs:
             -e CLOUDINARY_API_SECRET=fake \
             petfinder-backend:latest
 
-          # Esperamos 10s y verificamos que el contenedor sigue vivo
-          sleep 10
+          # Damos 8s para que Node cargue todos los módulos
+          sleep 8
 
-          if [ "$(docker inspect -f '{{.State.Running}}' petfinder-test 2>/dev/null)" = "true" ]; then
-            echo "✅ Imagen Docker arranca correctamente"
-            docker stop petfinder-test
+          echo "=== Logs del contenedor ==="
+          docker logs petfinder-test
+
+          # El smoke test detecta el bug original: "Cannot find module"
+          # No esperamos que arranque completo porque la BD es falsa,
+          # pero sí que cargue los módulos JS sin MODULE_NOT_FOUND.
+          if docker logs petfinder-test 2>&1 | grep -q "MODULE_NOT_FOUND"; then
+            echo "::error::❌ Imagen Docker tiene módulos faltantes"
+            docker rm -f petfinder-test
+            exit 1
+          fi
+
+          # Si vemos "Starting Nest application" o "Nest application", el build está OK
+          if docker logs petfinder-test 2>&1 | grep -qE "(Starting Nest application|InstanceLoader|RoutesResolver)"; then
+            echo "✅ Imagen Docker arranca correctamente — módulos JS cargados"
+            docker rm -f petfinder-test
           else
-            echo "::error::❌ Imagen Docker fallรณ al arrancar"
-            docker logs petfinder-test
+            echo "::error::❌ El contenedor no llegó a inicializar NestJS"
+            docker rm -f petfinder-test
             exit 1
           fi
