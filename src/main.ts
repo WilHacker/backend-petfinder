@@ -58,13 +58,13 @@ async function bootstrap() {
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('api/docs', app, document);
 
-  // Capturamos el puerto (3000 por defecto)
+  // Render y otros PaaS inyectan PORT y requieren bind a 0.0.0.0
   const port = process.env.PORT || 3000;
-  await app.listen(port);
+  await app.listen(port, '0.0.0.0');
 
-  logger.log(`🚀 El servidor de PetFinder está corriendo en: http://localhost:${port}`);
-  logger.log(`📄 Documentación Swagger disponible en: http://localhost:${port}/api/docs`);
-  logger.log(`🔌 WebSocket activo en: ws://localhost:${port}/realtime`);
+  logger.log(`🚀 El servidor de PetFinder está corriendo en el puerto: ${port}`);
+  logger.log(`📄 Documentación Swagger disponible en: /api/docs`);
+  logger.log(`🔌 WebSocket activo en: /realtime`);
 }
 
 void bootstrap().catch((err) => {
