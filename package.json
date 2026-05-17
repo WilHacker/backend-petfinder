@@ -26,7 +26,7 @@
     "prisma:seed": "ts-node prisma/seed.ts",
     "prisma:reset": "prisma migrate reset",
     "prisma:studio": "prisma studio",
-    "postinstall": "prisma generate && (npm run build || echo 'Build skipped — likely missing devDependencies, will be built later')",
+    "postinstall": "prisma generate",
     "dev": "nest start"
   },
   "dependencies": {
