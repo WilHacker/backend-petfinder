@@ -1,0 +1,50 @@
+# Dependencies — se instalan dentro del contenedor
+node_modules
+npm-debug.log
+
+# Build output — se genera dentro del contenedor
+dist
+build
+coverage
+
+# Variables de entorno — Railway/Render inyectan via env vars
+.env
+.env.local
+.env.*.local
+
+# Git
+.git
+.gitignore
+
+# IDE
+.vscode
+.idea
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs
+*.log
+
+# Tests — no necesarios en producción
+**/*.spec.ts
+**/*.test.ts
+test
+.nyc_output
+
+# Documentación
+docs
+*.md
+!README.md
+
+# Configuración de plataformas (no necesaria dentro del contenedor)
+railway.json
+nixpacks.toml
+.nixpacks
+
+# Memoria de Claude
+memory
+.claude
