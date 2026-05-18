@@ -138,13 +138,23 @@ export class AuthService {
     });
 
     if (existing) {
-      return this.generateTokens(existing.usuarioId, existing.personaId);
+      const tokens = await this.generateTokens(existing.usuarioId, existing.personaId);
+      return {
+        ...tokens,
+        usuario: {
+          usuarioId: existing.usuarioId,
+          correoElectronico: existing.correoElectronico,
+          nombre: existing.persona.nombre,
+          apellidoPaterno: existing.persona.apellidoPaterno,
+          rol: existing.rol,
+        },
+      };
     }
 
     // Crear cuenta nueva con clave aleatoria (no la necesita para OAuth)
     const claveHash = await bcrypt.hash(randomUUID(), 10);
 
-    const { usuario } = await this.prisma.$transaction(async (tx) => {
+    const { persona, usuario } = await this.prisma.$transaction(async (tx) => {
       const persona = await tx.persona.create({
         data: {
           nombre: googleUser.nombre,
@@ -164,7 +174,17 @@ export class AuthService {
       return { persona, usuario };
     });
 
-    return this.generateTokens(usuario.usuarioId, usuario.personaId);
+    const tokens = await this.generateTokens(usuario.usuarioId, usuario.personaId);
+    return {
+      ...tokens,
+      usuario: {
+        usuarioId: usuario.usuarioId,
+        correoElectronico: usuario.correoElectronico,
+        nombre: persona.nombre,
+        apellidoPaterno: persona.apellidoPaterno,
+        rol: usuario.rol,
+      },
+    };
   }
 
   // ─── helpers ────────────────────────────────────────────────────────────────

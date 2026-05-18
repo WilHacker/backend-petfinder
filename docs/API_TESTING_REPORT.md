@@ -160,7 +160,36 @@ Authorization: Bearer <accessToken>
 
 ## 1.5 — `GET /auth/google` y `GET /auth/google/callback`
 
-**Estado:** ⏭️ Pospuesto (se prueba al final con cuenta de Google)
+**Request:** navegar en el navegador a `GET /auth/google` (sin headers — público). Passport redirige automáticamente a la pantalla de selección de cuenta de Google.
+
+**Flujo:**
+1. `GET /auth/google` → redirige a Google OAuth consent screen
+2. Usuario selecciona cuenta → Google redirige a `GET /auth/google/callback`
+3. Server procesa el perfil de Google y responde con JSON
+
+**Response — 200 OK (cuenta existente vinculada automáticamente):**
+
+```json
+{
+  "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "refreshToken": "5df6bd17-9ce6-4c75-9c5d-e1d12660e729",
+  "usuario": {
+    "usuarioId": "a69b8530-4411-44cf-9656-c8032852404f",
+    "correoElectronico": "202203303@est.umss.edu",
+    "nombre": "WILLIAN ANDRES",
+    "apellidoPaterno": "ALMENDRAS CALIZAYA",
+    "rol": "usuario"
+  }
+}
+```
+
+**Estado:** ✅ OK
+
+**Notas:**
+- Email ya existente → hace login directo (no crea usuario nuevo). Vinculación automática.
+- Email nuevo → crea `Persona` + `Usuario` con `claveHash` de UUID aleatorio (el usuario no necesita contraseña).
+- Nombre y apellido vienen tal como están en el perfil de Google (pueden estar en mayúsculas).
+- **Bug detectado y corregido en esta sesión:** `findOrCreateGoogleUser` retornaba solo `{ accessToken, refreshToken }` sin el objeto `usuario`. Fix: ambos paths (existente y nuevo) ahora construyen y retornan el objeto `usuario` igual que `login` y `register`. Tests: 138/138 en verde.
 
 ---
 
@@ -877,7 +906,7 @@ Adicionalmente, los 3 métodos `sendPetLostAlert`, `sendQrScanAlert` y `sendZone
 
 | Módulo | Endpoints | Probados | ✅ OK | ⚠️ Parcial | ❌ Falla |
 |---|---|---|---|---|---|
-| **Auth** | 6 | 4 (+ 2 Google pospuestos) | 4 | 0 | 0 |
+| **Auth** | 6 | 6 | 6 | 0 | 0 |
 | **Users** | 8 | 8 | 8 | 0 | 0 |
 | **Tipos Mascota** | 3 | 3 | 3 | 0 | 0 |
 | **Pets** | 18 | 18 | 18 | 0 | 0 |
@@ -885,15 +914,15 @@ Adicionalmente, los 3 métodos `sendPetLostAlert`, `sendQrScanAlert` y `sendZone
 | **QR público** | 2 | 2 | 2 | 0 | 0 |
 | **Map** | 2 | 2 | 2 | 0 | 0 |
 | **WebSocket** | 1 namespace | 1 | 1 | 0 | 0 |
-| **TOTAL** | **46 + 1 WS** | **44 (+ 2 pospuestos)** | **44** | **0** | **0** |
+| **TOTAL** | **46 + 1 WS** | **46** | **46** | **0** | **0** |
 
 ## Cifras (post-fixes)
 
-- **Tasa de éxito (happy path):** 44/44 = **100 %**
+- **Tasa de éxito (happy path):** 46/46 = **100 %**
 - **Bugs críticos:** 0 ✅ (E1 resuelto)
 - **Bugs medios:** 0 ✅ (E2, E3 resueltos)
 - **Mejoras menores:** 0 ✅ (E4, E5 resueltos)
-- **Tests unitarios:** 136/136 en verde (3 nuevos cubren los nuevos comportamientos)
+- **Tests unitarios:** 138/138 en verde (5 nuevos cubren los nuevos comportamientos + Google OAuth)
 
 ## Verificación de flujos clave
 
@@ -908,7 +937,7 @@ Adicionalmente, los 3 métodos `sendPetLostAlert`, `sendQrScanAlert` y `sendZone
 ## Próximos pasos sugeridos
 
 1. Probar FCM end-to-end con un device token Kotlin real.
-2. Probar `auth/google` con cuenta real (pospuesto durante esta corrida).
+2. ~~Probar `auth/google` con cuenta real~~ ✅ completado.
 3. Cubrir happy path de `POST /pets/{id}/owners` y `DELETE /pets/{id}/owners/{personaId}` con un segundo usuario real.
 4. Agregar tests de integración (no solo unitarios) para la transición a `extraviada` y prevenir regresiones de E1.
 

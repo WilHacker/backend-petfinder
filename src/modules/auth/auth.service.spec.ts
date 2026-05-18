@@ -172,4 +172,47 @@ describe('AuthService', () => {
       );
     });
   });
+
+  // ─────────────────── findOrCreateGoogleUser ──────────────────
+
+  describe('findOrCreateGoogleUser', () => {
+    const googleUser = {
+      email: 'juan@gmail.com',
+      nombre: 'Juan',
+      apellidoPaterno: 'Pérez',
+      fotoPerfilUrl: 'https://lh3.googleusercontent.com/foto.jpg',
+    };
+
+    it('retorna tokens y datos del usuario si el email ya existe', async () => {
+      mockPrisma.usuario.findUnique.mockResolvedValue(mockUsuario);
+      mockPrisma.usuario.update.mockResolvedValue(mockUsuario);
+
+      const result = await service.findOrCreateGoogleUser(googleUser);
+
+      expect(result.accessToken).toBe('jwt_token');
+      expect(result.usuario.correoElectronico).toBe(mockUsuario.correoElectronico);
+      expect(result.usuario.nombre).toBe(mockPersona.nombre);
+      expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('crea usuario nuevo y retorna tokens y datos si el email no existe', async () => {
+      mockPrisma.usuario.findUnique.mockResolvedValue(null);
+      mockPrisma.$transaction.mockImplementation(
+        async (cb: (tx: typeof mockPrisma) => Promise<unknown>) =>
+          cb({
+            ...mockPrisma,
+            persona: { create: jest.fn().mockResolvedValue(mockPersona) },
+            usuario: { ...mockPrisma.usuario, create: jest.fn().mockResolvedValue(mockUsuario) },
+          }),
+      );
+      mockPrisma.usuario.update.mockResolvedValue(mockUsuario);
+
+      const result = await service.findOrCreateGoogleUser(googleUser);
+
+      expect(result.accessToken).toBe('jwt_token');
+      expect(result.usuario.nombre).toBe(mockPersona.nombre);
+      expect(result.usuario.apellidoPaterno).toBe(mockPersona.apellidoPaterno);
+      expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+    });
+  });
 });
