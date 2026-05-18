@@ -35,75 +35,84 @@ export class NotificationsService implements OnModuleInit {
   }
 
   async sendPetLostAlert(mascotaId: string) {
-    if (!this.app) return;
+    try {
+      if (!this.app) return;
 
-    const propietarios = await this.prisma.propietarioMascota.findMany({
-      where: { mascotaId, recibeAlertas: true },
-      include: {
-        mascota: { select: { nombre: true } },
-        persona: { include: { usuario: { select: { tokenFcm: true } } } },
-      },
-    });
+      const propietarios = await this.prisma.propietarioMascota.findMany({
+        where: { mascotaId, recibeAlertas: true },
+        include: {
+          mascota: { select: { nombre: true } },
+          persona: { include: { usuario: { select: { tokenFcm: true } } } },
+        },
+      });
 
-    const tokens = propietarios
-      .map((p) => p.persona.usuario?.tokenFcm)
-      .filter((t): t is string => !!t);
+      const tokens = propietarios
+        .map((p) => p.persona.usuario?.tokenFcm)
+        .filter((t): t is string => !!t);
 
-    if (!tokens.length) return;
+      if (!tokens.length) return;
 
-    const mascotaNombre = propietarios[0]?.mascota.nombre ?? 'Tu mascota';
+      const mascotaNombre = propietarios[0]?.mascota.nombre ?? 'Tu mascota';
 
-    await admin.messaging().sendEachForMulticast({
-      tokens,
-      notification: {
-        title: `¡${mascotaNombre} está desaparecida!`,
-        body: 'Activa la búsqueda y revisa su última ubicación conocida.',
-      },
-      data: { mascotaId, tipo: 'mascota_extraviada' },
-    });
+      await admin.messaging().sendEachForMulticast({
+        tokens,
+        notification: {
+          title: `¡${mascotaNombre} está desaparecida!`,
+          body: 'Activa la búsqueda y revisa su última ubicación conocida.',
+        },
+        data: { mascotaId, tipo: 'mascota_extraviada' },
+      });
 
-    this.logger.log(
-      `Alerta de extravío enviada a ${tokens.length} dispositivo(s) — mascota: ${mascotaId}`,
-    );
+      this.logger.log(
+        `Alerta de extravío enviada a ${tokens.length} dispositivo(s) — mascota: ${mascotaId}`,
+      );
+    } catch (err) {
+      this.logger.error(`sendPetLostAlert falló (mascota ${mascotaId})`, err as Error);
+    }
   }
 
   async sendQrScanAlert(mascotaId: string, lat: number, lng: number) {
-    if (!this.app) return;
+    try {
+      if (!this.app) return;
 
-    const propietarios = await this.prisma.propietarioMascota.findMany({
-      where: { mascotaId, recibeAlertas: true },
-      include: {
-        mascota: { select: { nombre: true } },
-        persona: { include: { usuario: { select: { tokenFcm: true } } } },
-      },
-    });
+      const propietarios = await this.prisma.propietarioMascota.findMany({
+        where: { mascotaId, recibeAlertas: true },
+        include: {
+          mascota: { select: { nombre: true } },
+          persona: { include: { usuario: { select: { tokenFcm: true } } } },
+        },
+      });
 
-    const tokens = propietarios
-      .map((p) => p.persona.usuario?.tokenFcm)
-      .filter((t): t is string => !!t);
+      const tokens = propietarios
+        .map((p) => p.persona.usuario?.tokenFcm)
+        .filter((t): t is string => !!t);
 
-    if (!tokens.length) return;
+      if (!tokens.length) return;
 
-    const mascotaNombre = propietarios[0]?.mascota.nombre ?? 'Tu mascota';
-    const mapsUrl = `https://maps.google.com/?q=${lat},${lng}`;
+      const mascotaNombre = propietarios[0]?.mascota.nombre ?? 'Tu mascota';
+      const mapsUrl = `https://maps.google.com/?q=${lat},${lng}`;
 
-    await admin.messaging().sendEachForMulticast({
-      tokens,
-      notification: {
-        title: `¡Alguien encontró a ${mascotaNombre}!`,
-        body: `Se escaneó el QR. Toca para ver la ubicación en el mapa.`,
-      },
-      data: { mascotaId, tipo: 'qr_escaneado', lat: String(lat), lng: String(lng), mapsUrl },
-    });
+      await admin.messaging().sendEachForMulticast({
+        tokens,
+        notification: {
+          title: `¡Alguien encontró a ${mascotaNombre}!`,
+          body: `Se escaneó el QR. Toca para ver la ubicación en el mapa.`,
+        },
+        data: { mascotaId, tipo: 'qr_escaneado', lat: String(lat), lng: String(lng), mapsUrl },
+      });
 
-    this.logger.log(`Alerta de escaneo QR enviada — mascota: ${mascotaId} lat:${lat} lng:${lng}`);
+      this.logger.log(`Alerta de escaneo QR enviada — mascota: ${mascotaId} lat:${lat} lng:${lng}`);
+    } catch (err) {
+      this.logger.error(`sendQrScanAlert falló (mascota ${mascotaId})`, err as Error);
+    }
   }
 
   async sendZoneAlert(mascotaId: string) {
-    if (!this.app) return;
+    try {
+      if (!this.app) return;
 
-    // Obtiene la última ubicación conocida de la mascota extraviada
-    const rows = await this.prisma.$queryRaw<Array<{ lat: number; lng: number; nombre: string }>>`
+      // Obtiene la última ubicación conocida de la mascota extraviada
+      const rows = await this.prisma.$queryRaw<Array<{ lat: number; lng: number; nombre: string }>>`
       SELECT
         ST_Y(ultima_ubicacion_conocida::geometry) AS lat,
         ST_X(ultima_ubicacion_conocida::geometry) AS lng,
@@ -113,19 +122,19 @@ export class NotificationsService implements OnModuleInit {
         AND ultima_ubicacion_conocida IS NOT NULL
     `;
 
-    if (!rows.length) return;
+      if (!rows.length) return;
 
-    const { lat, lng, nombre } = rows[0];
+      const { lat, lng, nombre } = rows[0];
 
-    // Usuarios con zonas seguras (de sus mascotas) que intersectan la ubicación perdida
-    const usuarios = await this.prisma.$queryRaw<Array<{ token_fcm: string }>>`
+      // Usuarios con zonas seguras (de sus mascotas) que intersectan la ubicación perdida
+      const usuarios = await this.prisma.$queryRaw<Array<{ token_fcm: string }>>`
       SELECT DISTINCT u.token_fcm
       FROM propietarios_mascota pm
       JOIN usuarios u ON u.persona_id = pm.persona_id
       JOIN zona_mascotas zm ON zm.mascota_id = pm.mascota_id
       JOIN zonas_seguras z ON z.zona_id = zm.zona_id
       WHERE u.token_fcm IS NOT NULL
-        AND pm.recibeAlertas = true
+        AND pm.recibe_alertas = true
         AND pm.mascota_id != ${mascotaId}::uuid
         AND z.esta_activa = true
         AND ST_DWithin(
@@ -135,18 +144,23 @@ export class NotificationsService implements OnModuleInit {
         )
     `;
 
-    const tokens = usuarios.map((u) => u.token_fcm).filter(Boolean);
-    if (!tokens.length) return;
+      const tokens = usuarios.map((u) => u.token_fcm).filter(Boolean);
+      if (!tokens.length) return;
 
-    await admin.messaging().sendEachForMulticast({
-      tokens,
-      notification: {
-        title: '¡Mascota perdida cerca de tu zona!',
-        body: `${nombre} está extraviada cerca de tu área. ¿Puedes ayudar?`,
-      },
-      data: { mascotaId, tipo: 'mascota_en_zona', lat: String(lat), lng: String(lng) },
-    });
+      await admin.messaging().sendEachForMulticast({
+        tokens,
+        notification: {
+          title: '¡Mascota perdida cerca de tu zona!',
+          body: `${nombre} está extraviada cerca de tu área. ¿Puedes ayudar?`,
+        },
+        data: { mascotaId, tipo: 'mascota_en_zona', lat: String(lat), lng: String(lng) },
+      });
 
-    this.logger.log(`Alerta de zona enviada a ${tokens.length} usuario(s) — mascota: ${mascotaId}`);
+      this.logger.log(
+        `Alerta de zona enviada a ${tokens.length} usuario(s) — mascota: ${mascotaId}`,
+      );
+    } catch (err) {
+      this.logger.error(`sendZoneAlert falló (mascota ${mascotaId})`, err as Error);
+    }
   }
 }

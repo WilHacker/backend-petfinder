@@ -135,7 +135,7 @@ describe('PetsController', () => {
 
   // ───────────────────────── Fotos ─────────────────────────────
 
-  describe('replacePhotos', () => {
+  describe('addPhotos', () => {
     const makeFile = (): Express.Multer.File =>
       ({
         buffer: Buffer.from('img'),
@@ -150,20 +150,25 @@ describe('PetsController', () => {
         path: '',
       }) satisfies Express.Multer.File;
 
-    it('delega a uploadPhotos con índice 0 por defecto', async () => {
+    it('delega a uploadPhotos con principalIndex undefined cuando no se envía', async () => {
       const files = [makeFile()];
       mockPetsService.uploadPhotos.mockResolvedValue([{ fotoId: 1 }]);
 
-      await controller.replacePhotos(MASCOTA_ID, PERSONA_ID, files, undefined);
+      await controller.addPhotos(MASCOTA_ID, PERSONA_ID, files, undefined);
 
-      expect(mockPetsService.uploadPhotos).toHaveBeenCalledWith(MASCOTA_ID, PERSONA_ID, files, 0);
+      expect(mockPetsService.uploadPhotos).toHaveBeenCalledWith(
+        MASCOTA_ID,
+        PERSONA_ID,
+        files,
+        undefined,
+      );
     });
 
     it('convierte fotoPrincipalIndex de string a número', async () => {
       const files = [makeFile(), makeFile()];
       mockPetsService.uploadPhotos.mockResolvedValue([{}, {}]);
 
-      await controller.replacePhotos(MASCOTA_ID, PERSONA_ID, files, '1');
+      await controller.addPhotos(MASCOTA_ID, PERSONA_ID, files, '1');
 
       expect(mockPetsService.uploadPhotos).toHaveBeenCalledWith(MASCOTA_ID, PERSONA_ID, files, 1);
     });
@@ -171,9 +176,14 @@ describe('PetsController', () => {
     it('pasa array vacío si files es undefined', async () => {
       mockPetsService.uploadPhotos.mockResolvedValue([]);
 
-      await controller.replacePhotos(MASCOTA_ID, PERSONA_ID, undefined as never, undefined);
+      await controller.addPhotos(MASCOTA_ID, PERSONA_ID, undefined as never, undefined);
 
-      expect(mockPetsService.uploadPhotos).toHaveBeenCalledWith(MASCOTA_ID, PERSONA_ID, [], 0);
+      expect(mockPetsService.uploadPhotos).toHaveBeenCalledWith(
+        MASCOTA_ID,
+        PERSONA_ID,
+        [],
+        undefined,
+      );
     });
   });
 

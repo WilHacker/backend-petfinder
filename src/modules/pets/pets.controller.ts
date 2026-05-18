@@ -201,7 +201,9 @@ export class PetsController {
   }
 
   @Post(':id/photos')
-  @ApiOperation({ summary: 'Reemplazar fotos de la mascota (mín. 1, máx. 4 imágenes)' })
+  @ApiOperation({
+    summary: 'Agregar fotos a la mascota (no reemplaza las existentes; máx. 4 fotos totales)',
+  })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {
@@ -211,12 +213,13 @@ export class PetsController {
         fotos: {
           type: 'array',
           items: { type: 'string', format: 'binary' },
-          description: '1 a 4 imágenes (jpeg, png, webp, gif — máx. 5 MB cada una)',
+          description:
+            '1 a 4 imágenes (jpeg, png, webp, gif — máx. 5 MB cada una). La suma con las fotos existentes no puede exceder 4.',
         },
         fotoPrincipalIndex: {
           type: 'integer',
-          default: 0,
-          description: 'Índice 0-based de la foto principal',
+          description:
+            'Opcional. Índice 0-based de las NUEVAS fotos que pasará a ser principal. Si se omite, la foto principal actual se mantiene.',
         },
       },
     },
@@ -231,13 +234,14 @@ export class PetsController {
       },
     }),
   )
-  replacePhotos(
+  addPhotos(
     @Param('id') mascotaId: string,
     @CurrentUser('personaId') personaId: string,
     @UploadedFiles() files: Express.Multer.File[],
     @Body('fotoPrincipalIndex') principalIndexStr?: string,
   ) {
-    const principalIndex = principalIndexStr !== undefined ? parseInt(principalIndexStr, 10) : 0;
+    const principalIndex =
+      principalIndexStr !== undefined ? parseInt(principalIndexStr, 10) : undefined;
     return this.petsService.uploadPhotos(mascotaId, personaId, files ?? [], principalIndex);
   }
 

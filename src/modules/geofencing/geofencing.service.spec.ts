@@ -217,13 +217,20 @@ describe('GeofencingService', () => {
       });
     });
 
-    it('actualiza geometría de círculo con $executeRaw', async () => {
+    it('actualiza geometría de círculo con $executeRaw (centro + radio = 2 queries)', async () => {
       await service.updateZone(ZONA_ID, PERSONA_ID, {
         tipo: 'circulo',
         lat: -17.8,
         lng: -63.2,
         radioMetros: 300,
       });
+
+      // Un $executeRaw para punto_central y otro para radio_metros
+      expect(mockPrisma.$executeRaw).toHaveBeenCalledTimes(2);
+    });
+
+    it('actualiza sólo el radio cuando solo viene radioMetros', async () => {
+      await service.updateZone(ZONA_ID, PERSONA_ID, { radioMetros: 1000 });
 
       expect(mockPrisma.$executeRaw).toHaveBeenCalledTimes(1);
     });

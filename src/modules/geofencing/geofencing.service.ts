@@ -181,20 +181,33 @@ export class GeofencingService {
       });
     }
 
-    if (dto.tipo === 'circulo' && dto.lat && dto.lng && dto.radioMetros) {
+    // Updates parciales: cada campo se aplica si está presente en el DTO
+    if (dto.lat !== undefined && dto.lng !== undefined) {
+      await this.prisma.$executeRaw`
+        UPDATE zonas_seguras
+        SET punto_central = ST_SetSRID(ST_MakePoint(${dto.lng}, ${dto.lat}), 4326)
+        WHERE zona_id = ${zonaId}
+      `;
+    }
+
+    if (dto.radioMetros !== undefined) {
+      await this.prisma.$executeRaw`
+        UPDATE zonas_seguras
+        SET radio_metros = ${dto.radioMetros}
+        WHERE zona_id = ${zonaId}
+      `;
+    }
+
+    if (dto.coordenadas?.length) {
+      const ring = [...dto.coordenadas, dto.coordenadas[0]];
+      const wkt = `POLYGON((${ring.map((c) => `${c.lng} ${c.lat}`).join(',')}))`;
+      const centroLng = dto.coordenadas.reduce((s, c) => s + c.lng, 0) / dto.coordenadas.length;
+      const centroLat = dto.coordenadas.reduce((s, c) => s + c.lat, 0) / dto.coordenadas.length;
       await this.prisma.$executeRaw`
         UPDATE zonas_seguras
         SET
-          punto_central = ST_SetSRID(ST_MakePoint(${dto.lng}, ${dto.lat}), 4326),
-          radio_metros  = ${dto.radioMetros}
-        WHERE zona_id = ${zonaId}
-      `;
-    } else if (dto.tipo === 'poligono' && dto.coordenadas) {
-      const ring = [...dto.coordenadas, dto.coordenadas[0]];
-      const wkt = `POLYGON((${ring.map((c) => `${c.lng} ${c.lat}`).join(',')}))`;
-      await this.prisma.$executeRaw`
-        UPDATE zonas_seguras
-        SET geometria = ST_SetSRID(ST_GeomFromText(${wkt}), 4326)
+          geometria     = ST_SetSRID(ST_GeomFromText(${wkt}), 4326),
+          punto_central = ST_SetSRID(ST_MakePoint(${centroLng}, ${centroLat}), 4326)
         WHERE zona_id = ${zonaId}
       `;
     }

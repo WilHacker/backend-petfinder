@@ -565,12 +565,10 @@ export class PetsService {
     mascotaId: string,
     personaId: string,
     files: Express.Multer.File[],
-    fotoPrincipalIndex = 0,
+    nuevoPrincipalIndex?: number,
   ) {
     if (files.length < MIN_FOTOS)
       throw new BadRequestException(`Se requiere al menos ${MIN_FOTOS} foto`);
-    if (files.length > MAX_FOTOS)
-      throw new BadRequestException(`Máximo ${MAX_FOTOS} fotos permitidas`);
 
     const invalidType = files.find((f) => !ALLOWED_MIME.includes(f.mimetype));
     if (invalidType)
@@ -579,11 +577,6 @@ export class PetsService {
     const oversized = files.find((f) => f.size > MAX_FILE_SIZE);
     if (oversized) throw new BadRequestException('Cada imagen debe pesar menos de 5 MB');
 
-    if (fotoPrincipalIndex >= files.length)
-      throw new BadRequestException(
-        `fotoPrincipalIndex (${fotoPrincipalIndex}) excede el número de fotos subidas (${files.length})`,
-      );
-
     const mascota = await this.prisma.mascota.findUnique({
       where: { mascotaId },
       include: { propietarios: true, fotos: true },
@@ -591,23 +584,38 @@ export class PetsService {
     if (!mascota) throw new NotFoundException('Mascota no encontrada');
     this.checkOwnership(mascota, personaId);
 
-    // Eliminar fotos anteriores de Cloudinary y de la BD
-    await Promise.all(mascota.fotos.map((f) => this.cloudinary.deleteByUrl(f.fotoUrl)));
-    await this.prisma.fotoMascota.deleteMany({ where: { mascotaId } });
+    const total = mascota.fotos.length + files.length;
+    if (total > MAX_FOTOS)
+      throw new BadRequestException(
+        `La mascota ya tiene ${mascota.fotos.length} foto(s); con ${files.length} nuevas superaría el máximo de ${MAX_FOTOS}`,
+      );
 
-    // Subir nuevas fotos a Cloudinary
+    if (nuevoPrincipalIndex !== undefined && nuevoPrincipalIndex >= files.length)
+      throw new BadRequestException(
+        `fotoPrincipalIndex (${nuevoPrincipalIndex}) excede el número de fotos subidas (${files.length})`,
+      );
+
+    // Subir nuevas fotos a Cloudinary (no se borran las existentes)
     const uploads = await Promise.all(
       files.map((f) => this.cloudinary.uploadBuffer(f.buffer, `mascotas/${mascotaId}`)),
     );
 
-    // Insertar registros en BD
+    // Si el caller marcó una nueva como principal, despromover la actual
+    const promoverNueva = nuevoPrincipalIndex !== undefined;
+    if (promoverNueva) {
+      await this.prisma.fotoMascota.updateMany({
+        where: { mascotaId, esPrincipal: true },
+        data: { esPrincipal: false },
+      });
+    }
+
     return this.prisma.$transaction(
       uploads.map((upload, i) =>
         this.prisma.fotoMascota.create({
           data: {
             mascotaId,
             fotoUrl: upload.secure_url,
-            esPrincipal: i === fotoPrincipalIndex,
+            esPrincipal: promoverNueva && i === nuevoPrincipalIndex,
           },
         }),
       ),
@@ -622,11 +630,11 @@ export class PetsService {
     if (!mascota) throw new NotFoundException('Mascota no encontrada');
     this.checkOwnership(mascota, personaId);
 
-    if (mascota.fotos.length <= MIN_FOTOS)
-      throw new BadRequestException('La mascota debe tener al menos 1 foto');
-
     const foto = mascota.fotos.find((f) => f.fotoId === fotoId);
     if (!foto) throw new NotFoundException('Foto no encontrada');
+
+    if (mascota.fotos.length <= MIN_FOTOS)
+      throw new BadRequestException('La mascota debe tener al menos 1 foto');
 
     await this.cloudinary.deleteByUrl(foto.fotoUrl);
     await this.prisma.fotoMascota.delete({ where: { fotoId } });

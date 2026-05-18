@@ -64,7 +64,12 @@ export class RegisterDto {
   @MaxLength(100, { message: 'La contraseña no puede exceder 100 caracteres' })
   clave!: string;
 
-  @ApiPropertyOptional({ type: MedioContactoDto })
+  @ApiPropertyOptional({
+    type: MedioContactoDto,
+    example: { tipo: 'WhatsApp', valor: '+591 70000000' },
+    description:
+      'Medio de contacto principal. tipo debe ser uno de: WhatsApp | Celular | Fijo | Telegram. valor es el número o usuario.',
+  })
   @IsOptional()
   @ValidateNested()
   @Type(() => MedioContactoDto)

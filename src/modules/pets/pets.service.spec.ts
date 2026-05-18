@@ -75,6 +75,7 @@ const mockPrisma = {
     create: jest.fn(),
     deleteMany: jest.fn(),
     delete: jest.fn(),
+    updateMany: jest.fn(),
   },
   reporteExtravio: {
     findFirst: jest.fn(),
@@ -430,43 +431,57 @@ describe('PetsService', () => {
 
     beforeEach(() => {
       mockPrisma.mascota.findUnique.mockResolvedValue(mascotaConFotos);
-      mockPrisma.fotoMascota.deleteMany.mockResolvedValue({ count: 1 });
       mockCloudinary.uploadBuffer.mockResolvedValue({ secure_url: FOTO_URL });
       mockPrisma.fotoMascota.create.mockResolvedValue(mockFoto);
+      mockPrisma.fotoMascota.updateMany.mockResolvedValue({ count: 1 });
       mockPrisma.$transaction.mockImplementation((ops: unknown) =>
         Array.isArray(ops) ? Promise.all(ops as Promise<unknown>[]) : (ops as () => unknown)(),
       );
     });
 
-    it('reemplaza fotos existentes y sube las nuevas a Cloudinary', async () => {
+    it('agrega fotos sin borrar las existentes', async () => {
       const files = [makeFile(), makeFile()];
 
-      const result = await service.uploadPhotos(MASCOTA_ID, PERSONA_ID, files, 0);
+      const result = await service.uploadPhotos(MASCOTA_ID, PERSONA_ID, files);
 
-      expect(mockCloudinary.deleteByUrl).toHaveBeenCalledWith(FOTO_URL);
-      expect(mockPrisma.fotoMascota.deleteMany).toHaveBeenCalledWith({
-        where: { mascotaId: MASCOTA_ID },
-      });
+      expect(mockCloudinary.deleteByUrl).not.toHaveBeenCalled();
+      expect(mockPrisma.fotoMascota.deleteMany).not.toHaveBeenCalled();
       expect(mockCloudinary.uploadBuffer).toHaveBeenCalledTimes(2);
       expect(mockPrisma.fotoMascota.create).toHaveBeenCalledTimes(2);
       expect(result).toHaveLength(2);
     });
 
-    it('marca correctamente la foto principal según el índice', async () => {
+    it('si la suma excede MAX_FOTOS lanza BadRequestException', async () => {
+      // mascotaConFotos ya tiene 1 foto; con 4 nuevas serían 5 > 4
+      const files = [makeFile(), makeFile(), makeFile(), makeFile()];
+
+      await expect(service.uploadPhotos(MASCOTA_ID, PERSONA_ID, files)).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('si se pasa fotoPrincipalIndex, despromueve la principal actual y marca la nueva', async () => {
       const files = [makeFile(), makeFile()];
-      const createdFotos = [
-        { ...mockFoto, fotoId: 1, esPrincipal: false },
-        { ...mockFoto, fotoId: 2, esPrincipal: true },
-      ];
-      mockPrisma.fotoMascota.create
-        .mockResolvedValueOnce(createdFotos[0])
-        .mockResolvedValueOnce(createdFotos[1]);
 
       await service.uploadPhotos(MASCOTA_ID, PERSONA_ID, files, 1);
 
+      expect(mockPrisma.fotoMascota.updateMany).toHaveBeenCalledWith({
+        where: { mascotaId: MASCOTA_ID, esPrincipal: true },
+        data: { esPrincipal: false },
+      });
       const createCalls = mockPrisma.fotoMascota.create.mock.calls;
       expect(createCalls[0][0].data.esPrincipal).toBe(false);
       expect(createCalls[1][0].data.esPrincipal).toBe(true);
+    });
+
+    it('si NO se pasa fotoPrincipalIndex, no toca la principal actual y las nuevas quedan no-principales', async () => {
+      const files = [makeFile()];
+
+      await service.uploadPhotos(MASCOTA_ID, PERSONA_ID, files);
+
+      expect(mockPrisma.fotoMascota.updateMany).not.toHaveBeenCalled();
+      const createCalls = mockPrisma.fotoMascota.create.mock.calls;
+      expect(createCalls[0][0].data.esPrincipal).toBe(false);
     });
 
     it('lanza BadRequestException si no se envía ningún archivo', async () => {
