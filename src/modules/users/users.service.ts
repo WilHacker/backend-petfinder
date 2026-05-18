@@ -10,6 +10,7 @@ import { CloudinaryService } from '../../cloudinary/cloudinary.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { AddContactDto } from './dto/add-contact.dto';
 import { UpdateLocationDto } from './dto/update-location.dto';
+import { UpdateFcmTokenDto } from './dto/update-fcm-token.dto';
 
 type ZoneCheckRow = {
   zona_id: number;
@@ -200,7 +201,7 @@ export class UsersService {
 
     // 5. Emite ubicación del dueño a co-propietarios (#32 en tiempo real)
     this.realtime.emitOwnerLocationUpdated(petRooms, {
-      personaId: usuario!.personaId,
+      personaId: usuario.personaId,
       usuarioId,
       lat: dto.lat,
       lng: dto.lng,
@@ -334,6 +335,17 @@ export class UsersService {
         fotoPrincipalUrl: pm.mascota.fotos[0]?.fotoUrl ?? null,
       })),
     };
+  }
+
+  async updateFcmToken(usuarioId: string, dto: UpdateFcmTokenDto) {
+    const usuario = await this.prisma.usuario.findUnique({ where: { usuarioId } });
+    if (!usuario) throw new NotFoundException('Usuario no encontrado');
+
+    await this.prisma.usuario.update({
+      where: { usuarioId },
+      data: { tokenFcm: dto.tokenFcm },
+    });
+    return { message: 'Token FCM actualizado' };
   }
 
   async findUsersOnMap(opts: { lat?: number; lng?: number; radio?: number } = {}) {

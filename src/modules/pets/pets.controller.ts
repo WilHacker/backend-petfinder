@@ -271,6 +271,27 @@ export class PetsController {
     return this.petsService.removeMedicalRecord(mascotaId, personaId, registroId);
   }
 
+  @Get(':id/scans')
+  @ApiOperation({
+    summary: 'Historial de escaneos QR de la mascota',
+    description:
+      'Devuelve todos los escaneos registrados del QR de la mascota, ordenados del más reciente al más antiguo. ' +
+      'Cada registro incluye coordenadas GPS si el escaneador las compartió.',
+  })
+  getScans(@Param('id') mascotaId: string, @CurrentUser('personaId') personaId: string) {
+    return this.petsService.getScans(mascotaId, personaId);
+  }
+
+  @Get(':id/reports')
+  @ApiOperation({
+    summary: 'Historial de reportes de extravío de la mascota',
+    description:
+      'Lista todos los reportes de extravío (abiertos y cerrados) con la última ubicación conocida al momento del reporte.',
+  })
+  getReports(@Param('id') mascotaId: string, @CurrentUser('personaId') personaId: string) {
+    return this.petsService.getReports(mascotaId, personaId);
+  }
+
   @Delete(':id/photos/:fotoId')
   @ApiOperation({ summary: 'Eliminar una foto de la mascota' })
   deletePhoto(

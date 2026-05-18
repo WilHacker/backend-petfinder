@@ -1,6 +1,6 @@
 # 🧪 Reporte de Pruebas API — PetFinder Backend
 
-**Fecha:** 2026-05-17 (pruebas) · **Actualizado:** 2026-05-18 (post-fixes)
+**Fecha:** 2026-05-17 (pruebas) · **Actualizado:** 2026-05-18 (post-fixes + 3 nuevos endpoints)
 **Entorno:** Local — `http://localhost:3000`
 **Herramienta:** `curl` ejecutado desde Bash
 **Ubicación de pruebas:** Cochabamba, Bolivia — UMSS (`lat: -17.3935, lng: -66.1457`)
@@ -315,7 +315,11 @@ curl -X PUT http://localhost:3000/users/me/photo \
 
 **Request:** `DELETE /users/me/contacts/8`
 
-**Response — 200 OK:** devuelve el contacto eliminado.
+**Response — 200 OK:**
+
+```json
+{ "contactoId": 8, "personaId": "15e8092d-...", "tipo": "Celular", "valor": "+591 71234567", "esPrincipal": false }
+```
 
 **Estado:** ✅ OK
 
@@ -342,7 +346,22 @@ curl -X PUT http://localhost:3000/users/me/photo \
 
 ## 3.1 — `GET /tipos-mascota` (público)
 
-**Response — 200 OK:** array con tipos (`Perro`, `Gato`, `Ave`, `Conejo`, `Reptil`, `Pez`, `Hámster`, `Cobayo`, `Hurón`, `Otro`).
+**Response — 200 OK:**
+
+```json
+[
+  { "tipoId": 1, "nombre": "Perro" },
+  { "tipoId": 2, "nombre": "Gato" },
+  { "tipoId": 3, "nombre": "Ave" },
+  { "tipoId": 4, "nombre": "Conejo" },
+  { "tipoId": 5, "nombre": "Reptil" },
+  { "tipoId": 6, "nombre": "Pez" },
+  { "tipoId": 7, "nombre": "Hámster" },
+  { "tipoId": 8, "nombre": "Cobayo" },
+  { "tipoId": 9, "nombre": "Hurón" },
+  { "tipoId": 10, "nombre": "Otro" }
+]
+```
 
 **Estado:** ✅ OK — endpoint público, no requiere auth.
 
@@ -395,7 +414,52 @@ curl -X PUT http://localhost:3000/users/me/photo \
 
 ## 4.2 — `GET /pets`
 
-**Response — 200 OK:** array con todas las mascotas del usuario autenticado (incluye `tipoMascota`, `placaQr`, fotos).
+**Response — 200 OK:**
+
+```json
+[
+  {
+    "mascotaId": "776cb109-96d4-4e00-b4db-59ab18ac1325",
+    "nombre": "Rocky",
+    "tipoId": 1,
+    "sexo": "M",
+    "colorPrimario": "Café",
+    "rasgosParticulares": "Orejas caídas",
+    "estado": "en_casa",
+    "fechaUltimaUbicacion": "2026-05-18T03:51:05.821Z",
+    "creadoEl": "2026-05-18T03:48:36.891Z",
+    "tipoMascota": { "tipoId": 1, "nombre": "Perro" },
+    "placaQr": {
+      "placaId": "ab4bec93-e1d7-474e-99f6-1960db92ec3a",
+      "tokenAcceso": "fafe5f0d-bc1c-470e-a3f0-5b8042063821",
+      "estaActiva": true
+    },
+    "fotos": [
+      {
+        "fotoId": 12,
+        "mascotaId": "776cb109-...",
+        "fotoUrl": "https://res.cloudinary.com/daelr9ppy/image/upload/...",
+        "esPrincipal": true,
+        "creadoEl": "2026-05-18T03:48:38.581Z"
+      }
+    ],
+    "propietarios": [
+      {
+        "personaId": "15e8092d-ae32-4582-b072-84ab428e7274",
+        "tipoRelacion": "Dueno_Principal",
+        "recibeAlertas": true,
+        "mostrarEnQr": true,
+        "persona": {
+          "personaId": "15e8092d-...",
+          "nombre": "Juan Carlos",
+          "apellidoPaterno": "Pérez",
+          "fotoPerfilUrl": "https://res.cloudinary.com/..."
+        }
+      }
+    ]
+  }
+]
+```
 
 **Estado:** ✅ OK
 
@@ -403,7 +467,53 @@ curl -X PUT http://localhost:3000/users/me/photo \
 
 ## 4.3 — `GET /pets/{id}`
 
-**Response — 200 OK:** detalle completo de la mascota.
+**Response — 200 OK:**
+
+```json
+{
+  "mascotaId": "776cb109-96d4-4e00-b4db-59ab18ac1325",
+  "nombre": "Rocky",
+  "tipoId": 1,
+  "sexo": "M",
+  "colorPrimario": "Café",
+  "rasgosParticulares": "Orejas caídas",
+  "estado": "en_casa",
+  "fechaUltimaUbicacion": "2026-05-18T03:51:05.821Z",
+  "creadoEl": "2026-05-18T03:48:36.891Z",
+  "tipoMascota": { "tipoId": 1, "nombre": "Perro" },
+  "placaQr": {
+    "placaId": "ab4bec93-...",
+    "mascotaId": "776cb109-...",
+    "tokenAcceso": "fafe5f0d-bc1c-470e-a3f0-5b8042063821",
+    "estaActiva": true,
+    "fechaActivacion": "2026-05-18T03:48:37.355Z"
+  },
+  "fotos": [
+    {
+      "fotoId": 12,
+      "fotoUrl": "https://res.cloudinary.com/daelr9ppy/image/upload/...",
+      "esPrincipal": true,
+      "creadoEl": "2026-05-18T03:48:38.581Z"
+    }
+  ],
+  "fichaMedica": null,
+  "propietarios": [
+    {
+      "personaId": "15e8092d-...",
+      "tipoRelacion": "Dueno_Principal",
+      "recibeAlertas": true,
+      "mostrarEnQr": true,
+      "persona": {
+        "nombre": "Juan Carlos",
+        "apellidoPaterno": "Pérez",
+        "fotoPerfilUrl": "https://res.cloudinary.com/...",
+        "mediosContacto": [{ "tipo": "WhatsApp", "valor": "70012345", "esPrincipal": true }]
+      }
+    }
+  ],
+  "ubicacion": { "lat": -17.394, "lng": -66.1465 }
+}
+```
 
 **Estado:** ✅ OK
 
@@ -411,7 +521,36 @@ curl -X PUT http://localhost:3000/users/me/photo \
 
 ## 4.4 — `GET /pets/{id}/card`
 
-**Response — 200 OK:** vista de "ficha pública" con `nombre`, `tipo`, `colorPrimario`, `rasgosParticulares`, `estaExtraviada`, fotos, `fichaMedica`, `registrosMedicos[]`, `propietarios[]`.
+**Request:** sin headers — endpoint público.
+
+**Response — 200 OK:**
+
+```json
+{
+  "mascotaId": "776cb109-96d4-4e00-b4db-59ab18ac1325",
+  "nombre": "Rocky",
+  "tipo": "Perro",
+  "sexo": "M",
+  "colorPrimario": "Café",
+  "rasgosParticulares": "Orejas caídas",
+  "estado": "en_casa",
+  "estaExtraviada": false,
+  "fotos": [
+    { "fotoId": 12, "url": "https://res.cloudinary.com/...", "esPrincipal": true }
+  ],
+  "fichaMedica": null,
+  "registrosMedicos": [],
+  "propietarios": [
+    {
+      "personaId": "15e8092d-...",
+      "nombreCompleto": "Juan Carlos Pérez",
+      "fotoPerfilUrl": "https://res.cloudinary.com/...",
+      "tipoRelacion": "Dueno_Principal",
+      "contactos": [{ "tipo": "WhatsApp", "valor": "70012345" }]
+    }
+  ]
+}
+```
 
 **Estado:** ✅ OK
 
@@ -491,7 +630,21 @@ curl -X PUT http://localhost:3000/users/me/photo \
 
 ## 4.10 — `GET /pets/{id}/medical`
 
-**Response — 200 OK:** array de `RegistroMedico`.
+**Response — 200 OK:**
+
+```json
+[
+  {
+    "registroId": 2,
+    "mascotaId": "776cb109-96d4-4e00-b4db-59ab18ac1325",
+    "tipo": "vacuna",
+    "descripcion": "Vacuna antirrábica anual",
+    "fecha": "2026-04-10T00:00:00.000Z",
+    "veterinario": "Dr. López — Veterinaria UMSS",
+    "creadoEl": "2026-05-18T12:59:49.115Z"
+  }
+]
+```
 
 **Estado:** ✅ OK
 
@@ -501,7 +654,21 @@ curl -X PUT http://localhost:3000/users/me/photo \
 
 **Request:** multipart con campo `fotos` (binary). Acepta opcional `fotoPrincipalIndex` para promover una de las fotos recién subidas como principal.
 
-**Response — 201 Created:** array de fotos agregadas con `fotoUrl` de Cloudinary. Las fotos previas se mantienen.
+**Response — 201 Created:**
+
+```json
+[
+  {
+    "fotoId": 13,
+    "mascotaId": "776cb109-96d4-4e00-b4db-59ab18ac1325",
+    "fotoUrl": "https://res.cloudinary.com/daelr9ppy/image/upload/v.../mascotas/776cb109-.../foto.png",
+    "esPrincipal": false,
+    "creadoEl": "2026-05-18T04:10:22.000Z"
+  }
+]
+```
+
+Las fotos previas se mantienen.
 
 **Estado:** ✅ OK — **Resuelto E3.** Comportamiento corregido: ahora **agrega** las fotos (no reemplaza). Verificado live: 1 foto inicial → POST 2 fotos → total 3 fotos, original con `esPrincipal: true` preservada. Límite máximo: 4 fotos por mascota; si el total excedería, devuelve 400.
 
@@ -509,7 +676,21 @@ curl -X PUT http://localhost:3000/users/me/photo \
 
 ## 4.12 — `GET /pets/{id}/owners-map`
 
-**Response — 200 OK:** lista de propietarios con `persona_id`, `nombre`, `foto_perfil_url`, `tipo_relacion`, `lat`/`lng`.
+**Response — 200 OK:**
+
+```json
+[
+  {
+    "persona_id": "15e8092d-ae32-4582-b072-84ab428e7274",
+    "nombre": "Juan Carlos",
+    "apellido_paterno": "Pérez",
+    "foto_perfil_url": "https://res.cloudinary.com/...",
+    "tipo_relacion": "Dueño Principal",
+    "lat": -17.3935,
+    "lng": -66.1457
+  }
+]
+```
 
 **Estado:** ✅ OK
 
@@ -650,6 +831,87 @@ curl -X PUT http://localhost:3000/users/me/photo \
 
 ---
 
+## 4.20 — `GET /pets/{id}/scans`
+
+**Request:** `GET /pets/776cb109-96d4-4e00-b4db-59ab18ac1325/scans` — requiere ser propietario/cuidador.
+
+**Response — 200 OK:**
+
+```json
+[
+  {
+    "escaneoId": 2,
+    "mascotaId": "776cb109-96d4-4e00-b4db-59ab18ac1325",
+    "lat": -17.3935,
+    "lng": -66.1457,
+    "escaneadoEl": "2026-05-18T13:20:47.562Z"
+  },
+  {
+    "escaneoId": 1,
+    "mascotaId": "776cb109-96d4-4e00-b4db-59ab18ac1325",
+    "lat": -17.3935,
+    "lng": -66.1457,
+    "escaneadoEl": "2026-05-18T03:49:37.437Z"
+  }
+]
+```
+
+**Estado:** ✅ OK
+
+**Notas:**
+
+- Ordenado del más reciente al más antiguo (`escaneadoEl DESC`).
+- `lat`/`lng` son `null` si el escaneador no compartió ubicación GPS (la app puede omitir las coordenadas en el body de `POST /qr/{token}/scan`).
+- Complementa la notificación push inmediata (`sendQrScanAlert`) con el historial completo — Historia 12.
+- Protección de ownership: un usuario que no sea propietario ni cuidador recibe 403.
+
+---
+
+## 4.21 — `GET /pets/{id}/reports`
+
+**Request:** `GET /pets/776cb109-96d4-4e00-b4db-59ab18ac1325/reports` — requiere ser propietario/cuidador.
+
+**Response — 200 OK (reporte abierto):**
+
+```json
+[
+  {
+    "reporte_id": 3,
+    "fecha_perdida": "2026-05-18T13:20:43.446Z",
+    "recompensa": "0",
+    "estado_reporte": "abierto",
+    "lat": -17.394,
+    "lng": -66.1465
+  }
+]
+```
+
+**Response — 200 OK (tras cerrar con `en_casa`):**
+
+```json
+[
+  {
+    "reporte_id": 3,
+    "fecha_perdida": "2026-05-18T13:20:43.446Z",
+    "recompensa": "0",
+    "estado_reporte": "cerrado",
+    "lat": -17.394,
+    "lng": -66.1465
+  }
+]
+```
+
+**Estado:** ✅ OK
+
+**Notas:**
+
+- Devuelve **todos** los reportes (abiertos y cerrados), ordenados por `fecha_perdida DESC`.
+- `lat`/`lng` son la última ubicación conocida de la mascota **al momento del extravío** (snapshot del momento), no la ubicación actual.
+- `estado_reporte` cambia de `"abierto"` a `"cerrado"` automáticamente cuando `PUT /pets/{id}/status` recibe `en_casa`, `en_paseo` o `recuperada`.
+- Protección de ownership: mismo guard que los demás endpoints privados de pets.
+
+---
+
 # 5. Geofencing
 
 ## 5.1 — `POST /geofencing/pets/{petId}/zones` (círculo)
@@ -704,7 +966,29 @@ curl -X PUT http://localhost:3000/users/me/photo \
 
 ## 5.3 — `GET /geofencing/zones`
 
-**Response — 200 OK:** array de zonas del usuario con sus mascotas asociadas.
+**Response — 200 OK:**
+
+```json
+[
+  {
+    "zona_id": 15,
+    "nombre_zona": "Casa UMSS (1km)",
+    "tipo": "circulo",
+    "radio_metros": 500,
+    "esta_activa": true,
+    "centro_lat": -17.3935,
+    "centro_lng": -66.1457,
+    "mascotas": [
+      {
+        "mascota_id": "776cb109-96d4-4e00-b4db-59ab18ac1325",
+        "nombre": "Rocky",
+        "estado": "en_casa",
+        "tipo_mascota": "Perro"
+      }
+    ]
+  }
+]
+```
 
 **Estado:** ✅ OK
 
@@ -712,7 +996,23 @@ curl -X PUT http://localhost:3000/users/me/photo \
 
 ## 5.4 — `GET /geofencing/pets/{petId}/zones`
 
-**Response — 200 OK:** zonas asociadas a esa mascota específica.
+**Response — 200 OK:**
+
+```json
+[
+  {
+    "zona_id": 15,
+    "nombre_zona": "Casa UMSS (1km)",
+    "radio_metros": 500,
+    "esta_activa": true,
+    "centro_lat": -17.3935,
+    "centro_lng": -66.1457,
+    "mascota_ids": ["776cb109-96d4-4e00-b4db-59ab18ac1325"]
+  }
+]
+```
+
+**Nota:** a diferencia de `GET /geofencing/zones`, este endpoint devuelve `mascota_ids` (array de UUIDs) en lugar del objeto mascota completo, y no incluye el campo `tipo`.
 
 **Estado:** ✅ OK
 
@@ -720,7 +1020,22 @@ curl -X PUT http://localhost:3000/users/me/photo \
 
 ## 5.5 — `GET /geofencing/zones/{id}`
 
-**Response — 200 OK:** detalle de zona individual.
+**Response — 200 OK:**
+
+```json
+{
+  "zona_id": 15,
+  "nombre_zona": "Casa UMSS (1km)",
+  "radio_metros": 500,
+  "esta_activa": true,
+  "centro_lat": -17.3935,
+  "centro_lng": -66.1457,
+  "geometria_geojson": null,
+  "mascota_ids": ["776cb109-96d4-4e00-b4db-59ab18ac1325"]
+}
+```
+
+**Nota:** `geometria_geojson` es `null` para zonas de tipo círculo. Para polígonos contiene el GeoJSON con las coordenadas del polígono.
 
 **Estado:** ✅ OK
 
@@ -848,7 +1163,49 @@ Otros eventos confirmados en los logs del server durante las pruebas:
 
 ---
 
-## 2.8 — `GET /users/{personaId}/card`
+## 2.8 — `PUT /users/me/fcm-token`
+
+**Request:**
+
+```http
+PUT /users/me/fcm-token
+Authorization: Bearer <accessToken>
+Content-Type: application/json
+```
+
+```json
+{ "tokenFcm": "dS1xF3pT_fakeDeviceToken_Android_12345abc" }
+```
+
+**Response — 200 OK:**
+
+```json
+{ "message": "Token FCM actualizado" }
+```
+
+**Casos de error:**
+
+- `{ "tokenFcm": "" }` → 400 `"tokenFcm should not be empty"` ✅
+- Sin body / campo ausente → 400 validación ✅
+
+**Verificación:**
+
+```json
+// GET /users/me inmediatamente después:
+{ "tokenFcm": "dS1xF3pT_fakeDeviceToken_Android_12345abc", ... }
+```
+
+**Estado:** ✅ OK
+
+**Notas:**
+
+- Android debe llamar este endpoint al arrancar la app o cuando Firebase renueva el token (callback `onNewToken`).
+- Sin un token registrado, `sendPetLostAlert`, `sendQrScanAlert` y `sendZoneAlert` omiten al usuario silenciosamente (no fallan, solo no le llega la push).
+- El token se puede actualizar cuantas veces se quiera; sobreescribe el anterior en BD.
+
+---
+
+## 2.9 — `GET /users/{personaId}/card`
 
 **Request:** `GET /users/15e8092d-ae32-4582-b072-84ab428e7274/card`
 
@@ -971,18 +1328,18 @@ Adicionalmente, los 3 métodos `sendPetLostAlert`, `sendQrScanAlert` y `sendZone
 | Módulo | Endpoints | Probados | ✅ OK | ⚠️ Parcial | ❌ Falla |
 |---|---|---|---|---|---|
 | **Auth** | 6 | 6 | 6 | 0 | 0 |
-| **Users** | 8 | 8 | 8 | 0 | 0 |
+| **Users** | 9 | 9 | 9 | 0 | 0 |
 | **Tipos Mascota** | 3 | 3 | 3 | 0 | 0 |
-| **Pets** | 19 | 19 | 19 | 0 | 0 |
+| **Pets** | 21 | 21 | 21 | 0 | 0 |
 | **Geofencing** | 6 | 6 | 6 | 0 | 0 |
 | **QR público** | 2 | 2 | 2 | 0 | 0 |
 | **Map** | 2 | 2 | 2 | 0 | 0 |
 | **WebSocket** | 1 namespace | 1 | 1 | 0 | 0 |
-| **TOTAL** | **47 + 1 WS** | **47** | **47** | **0** | **0** |
+| **TOTAL** | **50 + 1 WS** | **50** | **50** | **0** | **0** |
 
 ## Cifras (post-fixes)
 
-- **Tasa de éxito (happy path):** 47/47 = **100 %**
+- **Tasa de éxito (happy path):** 50/50 = **100 %**
 - **Bugs críticos:** 0 ✅ (E1 resuelto)
 - **Bugs medios:** 0 ✅ (E2, E3 resueltos)
 - **Mejoras menores:** 0 ✅ (E4, E5 resueltos)
@@ -1000,11 +1357,14 @@ Adicionalmente, los 3 métodos `sendPetLostAlert`, `sendQrScanAlert` y `sendZone
 
 ## Próximos pasos sugeridos
 
-1. Probar FCM end-to-end con un device token Kotlin real.
+1. Probar FCM end-to-end con un device token Kotlin real (único gap restante).
 2. ~~Probar `auth/google` con cuenta real~~ ✅ completado.
 3. ~~Cubrir happy path de owners~~ ✅ completado — `POST` y `DELETE /pets/{id}/owners/{personaId}` probados con segundo usuario real.
 4. ~~Probar `en_paseo` y `en_casa`~~ ✅ completado.
-5. Agregar tests de integración (no solo unitarios) para la transición a `extraviada` y prevenir regresiones de E1.
+5. ~~Implementar `PUT /users/me/fcm-token`~~ ✅ completado y probado.
+6. ~~Implementar `GET /pets/{id}/scans`~~ ✅ completado y probado.
+7. ~~Implementar `GET /pets/{id}/reports`~~ ✅ completado y probado.
+8. Agregar tests de integración (no solo unitarios) para la transición a `extraviada` y prevenir regresiones de E1.
 
 ---
 

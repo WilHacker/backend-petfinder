@@ -21,6 +21,7 @@ import { UsersService } from './users.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { AddContactDto } from './dto/add-contact.dto';
 import { UpdateLocationDto } from './dto/update-location.dto';
+import { UpdateFcmTokenDto } from './dto/update-fcm-token.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
@@ -86,6 +87,17 @@ export class UsersController {
     @Param('id', ParseIntPipe) contactoId: number,
   ) {
     return this.usersService.removeContact(usuarioId, contactoId);
+  }
+
+  @Put('me/fcm-token')
+  @ApiOperation({
+    summary: 'Registrar o actualizar token FCM del dispositivo',
+    description:
+      'Android llama a este endpoint tras obtener el token de Firebase Messaging. ' +
+      'Sin un token registrado las notificaciones push (mascota extraviada, escaneo QR, etc.) no llegan.',
+  })
+  updateFcmToken(@CurrentUser('sub') usuarioId: string, @Body() dto: UpdateFcmTokenDto) {
+    return this.usersService.updateFcmToken(usuarioId, dto);
   }
 
   @Put('me/location')

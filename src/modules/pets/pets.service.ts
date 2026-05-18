@@ -641,6 +641,53 @@ export class PetsService {
     return { message: 'Foto eliminada' };
   }
 
+  async getScans(mascotaId: string, personaId: string) {
+    const mascota = await this.prisma.mascota.findUnique({
+      where: { mascotaId },
+      include: { propietarios: true },
+    });
+    if (!mascota) throw new NotFoundException('Mascota no encontrada');
+    this.checkOwnership(mascota, personaId);
+
+    return this.prisma.escaneoQr.findMany({
+      where: { mascotaId },
+      orderBy: { escaneadoEl: 'desc' },
+    });
+  }
+
+  async getReports(mascotaId: string, personaId: string) {
+    const mascota = await this.prisma.mascota.findUnique({
+      where: { mascotaId },
+      include: { propietarios: true },
+    });
+    if (!mascota) throw new NotFoundException('Mascota no encontrada');
+    this.checkOwnership(mascota, personaId);
+
+    return this.prisma.$queryRaw<
+      Array<{
+        reporte_id: number;
+        fecha_perdida: Date;
+        recompensa: number | null;
+        estado_reporte: string | null;
+        lat: number | null;
+        lng: number | null;
+      }>
+    >`
+      SELECT
+        r.reporte_id,
+        r.fecha_perdida,
+        r.recompensa,
+        r.estado_reporte,
+        CASE WHEN r.ultima_ubicacion_conocida IS NOT NULL
+             THEN ST_Y(r.ultima_ubicacion_conocida::geometry) END AS lat,
+        CASE WHEN r.ultima_ubicacion_conocida IS NOT NULL
+             THEN ST_X(r.ultima_ubicacion_conocida::geometry) END AS lng
+      FROM reportes_extravio r
+      WHERE r.mascota_id = ${mascotaId}::uuid
+      ORDER BY r.fecha_perdida DESC
+    `;
+  }
+
   private checkOwnership(
     mascota: { propietarios: Array<{ personaId: string }> },
     personaId: string,
