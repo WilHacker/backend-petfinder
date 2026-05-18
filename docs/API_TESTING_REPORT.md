@@ -534,9 +534,30 @@ curl -X PUT http://localhost:3000/users/me/photo \
 
 **Request:** `{ "estado": "recuperada" }`
 
-**Response — 200 OK:** `{ "mascotaId": "...", "nombre": "Pelusa", "estado": "recuperada" }`
+**Response — 200 OK:** `{ "mascotaId": "...", "nombre": "Rocky", "estado": "recuperada" }`
 
-**Estado:** ✅ OK — esta transición no dispara `sendZoneAlert`, por eso no crashea.
+**Estado:** ✅ OK — cierra cualquier reporte de extravío abierto. No dispara notificaciones FCM.
+
+---
+
+## 4.14b — `PUT /pets/{id}/status` con `estado=en_paseo` y `estado=en_casa`
+
+**Casos probados:**
+
+```json
+{ "estado": "en_paseo" }
+→ { "mascotaId": "776cb109-...", "nombre": "Rocky", "estado": "en_paseo" }
+
+{ "estado": "en_casa" }
+→ { "mascotaId": "776cb109-...", "nombre": "Rocky", "estado": "en_casa" }
+```
+
+**Estado:** ✅ OK
+
+**Notas:**
+- `en_paseo` activa propagación automática de GPS: cuando el dueño actualiza su ubicación, las mascotas en estado `en_paseo` también se actualizan automáticamente y se emite `pet:location-updated` por WebSocket.
+- `en_casa` cierra cualquier reporte de extravío abierto (mismo branch que `recuperada`).
+- Ninguno de los dos dispara notificaciones FCM.
 
 ---
 
@@ -562,23 +583,66 @@ curl -X PUT http://localhost:3000/users/me/photo \
 
 ## 4.17 — `POST /pets/{id}/owners`
 
-**Request con UUID nulo:**
+**Request (happy path — agregar cuidadora):**
 
 ```json
-{ "personaId": "00000000-0000-0000-0000-000000000000", "tipoRelacion": "Familiar" }
+{ "personaId": "d0a60bc2-45b9-46bc-8572-eaab85926377", "tipoRelacion": "Cuidador" }
 ```
 
-**Response — 400 Bad Request:**
+**Response — 201 Created:**
 
 ```json
-{ "errores": { "personaId": ["El ID de la persona debe ser un UUID v4 válido"] } }
+{
+  "personaId": "d0a60bc2-45b9-46bc-8572-eaab85926377",
+  "mascotaId": "776cb109-96d4-4e00-b4db-59ab18ac1325",
+  "tipoRelacion": "Cuidador",
+  "recibeAlertas": true,
+  "mostrarEnQr": true,
+  "persona": {
+    "personaId": "d0a60bc2-...",
+    "nombre": "Maria",
+    "apellidoPaterno": "Gomez",
+    "fotoPerfilUrl": null
+  }
+}
 ```
 
-**Estado:** ✅ OK (validación correcta — UUID v4 exige bit pattern específico). El happy path con un segundo usuario real no se probó en esta corrida (requiere segundo registro). Endpoint `DELETE /pets/{id}/owners/{personaId}` también pendiente del happy path.
+**Casos de error probados:**
+
+1. UUID nil `00000000-...` → 400 `"El ID de la persona debe ser un UUID v4 válido"` ✅
+2. Misma persona dos veces → 400 `"Esta persona ya es propietaria o cuidadora de la mascota"` ✅
+
+**Estado:** ✅ OK — probado con segundo usuario real (`maria.test@petfinder.dev`).
 
 ---
 
-## 4.18 — `DELETE /pets/{id}`
+## 4.18 — `DELETE /pets/{id}/owners/{personaId}`
+
+**Casos probados:**
+
+1. **Happy path** — remover cuidadora María → 200 OK:
+
+```json
+{
+  "personaId": "d0a60bc2-45b9-46bc-8572-eaab85926377",
+  "mascotaId": "776cb109-96d4-4e00-b4db-59ab18ac1325",
+  "tipoRelacion": "Cuidador",
+  "recibeAlertas": true,
+  "mostrarEnQr": true
+}
+```
+
+1. **Protección del Dueño Principal** — intentar eliminar al `Dueno_Principal` → 403:
+
+```json
+{ "message": "No se puede eliminar al Dueño Principal de la mascota", "error": "Forbidden", "statusCode": 403 }
+```
+
+**Estado:** ✅ OK — validaciones correctas en ambos casos.
+
+---
+
+## 4.19 — `DELETE /pets/{id}`
 
 **Response — 200 OK:** `{ "message": "Mascota eliminada" }`
 
@@ -909,16 +973,16 @@ Adicionalmente, los 3 métodos `sendPetLostAlert`, `sendQrScanAlert` y `sendZone
 | **Auth** | 6 | 6 | 6 | 0 | 0 |
 | **Users** | 8 | 8 | 8 | 0 | 0 |
 | **Tipos Mascota** | 3 | 3 | 3 | 0 | 0 |
-| **Pets** | 18 | 18 | 18 | 0 | 0 |
+| **Pets** | 19 | 19 | 19 | 0 | 0 |
 | **Geofencing** | 6 | 6 | 6 | 0 | 0 |
 | **QR público** | 2 | 2 | 2 | 0 | 0 |
 | **Map** | 2 | 2 | 2 | 0 | 0 |
 | **WebSocket** | 1 namespace | 1 | 1 | 0 | 0 |
-| **TOTAL** | **46 + 1 WS** | **46** | **46** | **0** | **0** |
+| **TOTAL** | **47 + 1 WS** | **47** | **47** | **0** | **0** |
 
 ## Cifras (post-fixes)
 
-- **Tasa de éxito (happy path):** 46/46 = **100 %**
+- **Tasa de éxito (happy path):** 47/47 = **100 %**
 - **Bugs críticos:** 0 ✅ (E1 resuelto)
 - **Bugs medios:** 0 ✅ (E2, E3 resueltos)
 - **Mejoras menores:** 0 ✅ (E4, E5 resueltos)
@@ -938,8 +1002,9 @@ Adicionalmente, los 3 métodos `sendPetLostAlert`, `sendQrScanAlert` y `sendZone
 
 1. Probar FCM end-to-end con un device token Kotlin real.
 2. ~~Probar `auth/google` con cuenta real~~ ✅ completado.
-3. Cubrir happy path de `POST /pets/{id}/owners` y `DELETE /pets/{id}/owners/{personaId}` con un segundo usuario real.
-4. Agregar tests de integración (no solo unitarios) para la transición a `extraviada` y prevenir regresiones de E1.
+3. ~~Cubrir happy path de owners~~ ✅ completado — `POST` y `DELETE /pets/{id}/owners/{personaId}` probados con segundo usuario real.
+4. ~~Probar `en_paseo` y `en_casa`~~ ✅ completado.
+5. Agregar tests de integración (no solo unitarios) para la transición a `extraviada` y prevenir regresiones de E1.
 
 ---
 
