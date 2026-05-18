@@ -189,10 +189,11 @@ export class UsersService {
       where: { usuarioId },
       select: { personaId: true },
     });
+    if (!usuario) return { message: 'Ubicación actualizada' };
 
     // 4. Todas las mascotas del usuario (para los rooms de co-propietarios)
     const todasLasRelaciones = await this.prisma.propietarioMascota.findMany({
-      where: { personaId: usuario!.personaId },
+      where: { personaId: usuario.personaId },
       select: { mascotaId: true },
     });
     const petRooms = todasLasRelaciones.map((r) => `pet:${r.mascotaId}`);
@@ -255,6 +256,7 @@ export class UsersService {
        AND rv.fecha_hora_salida IS NULL
       WHERE zm.mascota_id = ${mascotaId}::uuid
         AND z.esta_activa = true
+        AND (z.radio_metros IS NOT NULL OR z.geometria IS NOT NULL)
     `;
 
     for (const zona of zonas) {
