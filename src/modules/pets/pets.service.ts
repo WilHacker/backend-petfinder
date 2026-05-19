@@ -11,6 +11,7 @@ import { CloudinaryService } from '../../cloudinary/cloudinary.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RealtimeService } from '../../infrastructure/realtime/realtime.service';
 import { NotificationsService } from '../../infrastructure/notifications/notifications.service';
+import { ScanDto } from './dto/scan.dto';
 import { AddOwnerDto } from './dto/add-owner.dto';
 import { CreateMedicalRecordDto } from './dto/create-medical-record.dto';
 import { UpdateMedicalRecordDto } from './dto/update-medical-record.dto';
@@ -715,6 +716,40 @@ export class PetsService {
       WHERE r.mascota_id = ${mascotaId}::uuid
       ORDER BY r.fecha_perdida DESC
     `;
+  }
+
+  async getPetByToken(tokenAcceso: string) {
+    const placa = await this.prisma.placaQr.findUnique({
+      where: { tokenAcceso },
+    });
+    if (!placa || !placa.mascotaId) throw new NotFoundException('Placa QR no encontrada');
+    if (!placa.estaActiva) throw new NotFoundException('Esta placa QR está desactivada');
+
+    return this.findPetCard(placa.mascotaId);
+  }
+
+  async registerScan(tokenAcceso: string, dto: ScanDto) {
+    const placa = await this.prisma.placaQr.findUnique({
+      where: { tokenAcceso },
+    });
+    if (!placa || !placa.mascotaId) throw new NotFoundException('Placa QR no encontrada');
+    if (!placa.estaActiva) throw new NotFoundException('Esta placa QR está desactivada');
+
+    const escaneo = await this.prisma.escaneoQr.create({
+      data: {
+        mascotaId: placa.mascotaId,
+        lat: dto.lat ?? null,
+        lng: dto.lng ?? null,
+      },
+    });
+
+    return {
+      escaneoId: escaneo.escaneoId,
+      mascotaId: escaneo.mascotaId,
+      lat: escaneo.lat,
+      lng: escaneo.lng,
+      escaneadoEl: escaneo.escaneadoEl,
+    };
   }
 
   private checkOwnership(

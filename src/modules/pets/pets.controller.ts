@@ -6,6 +6,7 @@ import {
   Get,
   Param,
   ParseIntPipe,
+  ParseUUIDPipe,
   Post,
   Put,
   UploadedFiles,
@@ -18,6 +19,7 @@ import { memoryStorage } from 'multer';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { Public } from '../../common/decorators/public.decorator';
+import { ScanDto } from './dto/scan.dto';
 import { AddOwnerDto } from './dto/add-owner.dto';
 import { CreateMedicalRecordDto } from './dto/create-medical-record.dto';
 import { UpdateMedicalRecordDto } from './dto/update-medical-record.dto';
@@ -151,6 +153,31 @@ export class PetsController {
   })
   getPetCard(@Param('id') mascotaId: string) {
     return this.petsService.findPetCard(mascotaId);
+  }
+
+  @Get('public/:token')
+  @Public()
+  @ApiOperation({
+    summary: 'Datos públicos de la mascota por token QR',
+    description:
+      'Recibe el tokenAcceso de la placa QR y retorna la tarjeta pública de la mascota. ' +
+      'Llamar cuando la página web carga tras escanear el QR. Sin JWT requerido.',
+  })
+  getPetByToken(@Param('token', ParseUUIDPipe) tokenAcceso: string) {
+    return this.petsService.getPetByToken(tokenAcceso);
+  }
+
+  @Post('public/:token/scan')
+  @Public()
+  @ApiOperation({
+    summary: 'Registrar escaneo QR con ubicación opcional',
+    description:
+      'Registra que alguien escaneó el QR de la mascota. ' +
+      'Enviar lat/lng si el escáner otorgó permiso de ubicación; omitirlos si rechazó. ' +
+      'Sin JWT requerido.',
+  })
+  registerScan(@Param('token', ParseUUIDPipe) tokenAcceso: string, @Body() dto: ScanDto) {
+    return this.petsService.registerScan(tokenAcceso, dto);
   }
 
   @Get(':id')

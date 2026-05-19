@@ -1,6 +1,6 @@
 # 🧪 Reporte de Pruebas API — PetFinder Backend
 
-**Fecha:** 2026-05-17 (pruebas) · **Actualizado:** 2026-05-18 (post-fixes + 7 nuevos endpoints)
+**Fecha:** 2026-05-17 (pruebas) · **Actualizado:** 2026-05-19 (post-fixes + 9 nuevos endpoints)
 **Entorno:** Local — `http://localhost:3000`
 **Herramienta:** `curl` ejecutado desde Bash
 **Ubicación de pruebas:** Cochabamba, Bolivia — UMSS (`lat: -17.3935, lng: -66.1457`)
@@ -961,6 +961,158 @@ Todos los campos son opcionales — se actualiza solo lo que viene en el body:
 
 ---
 
+## 4.24 — `GET /pets/public/{token}`
+
+**Request:** sin headers — endpoint público, sin JWT.
+
+```http
+GET /pets/public/65f6dc56-bbd0-4194-a55f-aa80d00929fc
+```
+
+**Response — 200 OK:**
+
+```json
+{
+  "mascotaId": "1b0cac91-3932-4091-91a4-8ff502d7a223",
+  "nombre": "Firulais",
+  "tipo": "Perro",
+  "sexo": "M",
+  "colorPrimario": "Negro",
+  "rasgosParticulares": "Manchas blancas",
+  "estado": "extraviada",
+  "estaExtraviada": true,
+  "fotos": [
+    { "fotoId": 1, "url": "https://res.cloudinary.com/...", "esPrincipal": true }
+  ],
+  "fichaMedica": null,
+  "registrosMedicos": [
+    { "registroId": 3, "tipo": "vacuna", "descripcion": "anti rabia", "fecha": "2026-05-13T00:00:00.000Z", "veterinario": "veterinario juan" }
+  ],
+  "propietarios": [
+    {
+      "personaId": "dc0c8f82-...",
+      "nombreCompleto": "Wilian Almendras",
+      "fotoPerfilUrl": "https://res.cloudinary.com/...",
+      "tipoRelacion": "Dueno_Principal",
+      "contactos": [{ "tipo": "WhatsApp", "valor": "69524395" }]
+    }
+  ]
+}
+```
+
+**Response — 404 (UUID válido pero inexistente):**
+
+```json
+{ "message": "Placa QR no encontrada", "error": "Not Found", "statusCode": 404 }
+```
+
+**Response — 400 (formato no-UUID en la URL):**
+
+```json
+{ "message": "Validation failed (uuid is expected)", "error": "Bad Request", "statusCode": 400 }
+```
+
+**Estado:** ✅ OK
+
+**Notas:**
+
+- Recibe el `tokenAcceso` de la tabla `PlacaQr` (no el `mascotaId`). El QR generado por `GET /pets/{id}/qr` ya contiene este token en la URL.
+- Solo retorna propietarios con `mostrarEnQr: true` — campo de privacidad del dueño.
+- Verifica que la placa esté activa (`estaActiva: true`); si está desactivada retorna 404.
+- Es la primera llamada que la **página web** hace al cargar tras el escaneo, antes de pedir ubicación.
+- `ParseUUIDPipe` en el controlador rechaza con 400 cualquier token que no sea UUID v4 válido, sin tocar la BD.
+
+---
+
+## 4.25 — `POST /pets/public/{token}/scan`
+
+**Request:** sin headers — endpoint público, sin JWT.
+
+**Caso A — usuario rechazó permiso de ubicación (body vacío):**
+
+```http
+POST /pets/public/65f6dc56-bbd0-4194-a55f-aa80d00929fc/scan
+Content-Type: application/json
+
+{}
+```
+
+**Response — 201 Created:**
+
+```json
+{
+  "escaneoId": 3,
+  "mascotaId": "1b0cac91-3932-4091-91a4-8ff502d7a223",
+  "lat": null,
+  "lng": null,
+  "escaneadoEl": "2026-05-19T13:40:08.013Z"
+}
+```
+
+**Caso B — usuario otorgó permiso de ubicación:**
+
+```http
+POST /pets/public/65f6dc56-bbd0-4194-a55f-aa80d00929fc/scan
+Content-Type: application/json
+
+{ "lat": -17.3935, "lng": -66.1570 }
+```
+
+**Response — 201 Created:**
+
+```json
+{
+  "escaneoId": 4,
+  "mascotaId": "1b0cac91-3932-4091-91a4-8ff502d7a223",
+  "lat": -17.3935,
+  "lng": -66.157,
+  "escaneadoEl": "2026-05-19T13:40:12.958Z"
+}
+```
+
+**Caso C — coordenadas fuera de rango:**
+
+```http
+POST /pets/public/65f6dc56-bbd0-4194-a55f-aa80d00929fc/scan
+Content-Type: application/json
+
+{ "lat": 999, "lng": 999 }
+```
+
+**Response — 400 Bad Request:**
+
+```json
+{
+  "statusCode": 400,
+  "error": "Bad Request",
+  "message": "Error de validación",
+  "errores": {
+    "lat": ["lat must not be greater than 90"],
+    "lng": ["lng must not be greater than 180"]
+  }
+}
+```
+
+**Verificación en historial del dueño** (`GET /pets/{id}/scans`):
+
+```json
+[
+  { "escaneoId": 4, "mascotaId": "1b0cac91-...", "lat": -17.3935, "lng": -66.157, "escaneadoEl": "2026-05-19T13:40:12.958Z" },
+  { "escaneoId": 3, "mascotaId": "1b0cac91-...", "lat": null, "lng": null, "escaneadoEl": "2026-05-19T13:40:08.013Z" }
+]
+```
+
+**Estado:** ✅ OK
+
+**Notas:**
+
+- `lat` y `lng` son opcionales — si el escáner rechazó el permiso de ubicación, el body va vacío y se guarda `null`.
+- Rango validado: `lat ∈ [-90, 90]`, `lng ∈ [-180, 180]`.
+- El dueño accede al historial completo desde `GET /pets/{id}/scans` (requiere JWT) — incluye lat/lng cuando están disponibles.
+- Flujo de la web: llamar primero sin coords al cargar → pedir permiso de geolocalización → si acepta, llamar de nuevo con coords.
+
+---
+
 # 5. Geofencing
 
 ## 5.1 — `POST /geofencing/pets/{petId}/zones` (círculo)
@@ -1495,16 +1647,16 @@ Adicionalmente, los 3 métodos `sendPetLostAlert`, `sendQrScanAlert` y `sendZone
 | **Auth** | 6 | 6 | 6 | 0 | 0 |
 | **Users** | 9 | 9 | 9 | 0 | 0 |
 | **Tipos Mascota** | 3 | 3 | 3 | 0 | 0 |
-| **Pets** | 22 | 22 | 22 | 0 | 0 |
+| **Pets** | 24 | 24 | 24 | 0 | 0 |
 | **Geofencing** | 9 | 9 | 9 | 0 | 0 |
 | **QR público** | 2 | 2 | 2 | 0 | 0 |
 | **Map** | 2 | 2 | 2 | 0 | 0 |
 | **WebSocket** | 1 namespace | 1 | 1 | 0 | 0 |
-| **TOTAL** | **53 + 1 WS** | **53** | **53** | **0** | **0** |
+| **TOTAL** | **55 + 1 WS** | **55** | **55** | **0** | **0** |
 
 ## Cifras (post-fixes)
 
-- **Tasa de éxito (happy path):** 53/53 = **100 %**
+- **Tasa de éxito (happy path):** 55/55 = **100 %**
 - **Bugs críticos:** 0 ✅ (E1 resuelto)
 - **Bugs medios:** 0 ✅ (E2, E3 resueltos)
 - **Mejoras menores:** 0 ✅ (E4, E5 resueltos)
@@ -1533,6 +1685,8 @@ Adicionalmente, los 3 métodos `sendPetLostAlert`, `sendQrScanAlert` y `sendZone
 9. ~~Implementar `PUT /pets/{id}/medical/{registroId}`~~ ✅ completado y probado.
 10. ~~Gestión masiva de mascotas en zonas~~ ✅ completado — `POST/PUT/DELETE /geofencing/zones/{id}/pets` probados.
 11. Agregar tests de integración (no solo unitarios) para la transición a `extraviada` y prevenir regresiones de E1.
+12. ~~Implementar `GET /pets/public/{token}` — datos públicos por token QR~~ ✅ completado y probado.
+13. ~~Implementar `POST /pets/public/{token}/scan` — escaneo con ubicación opcional~~ ✅ completado y probado.
 
 ---
 
