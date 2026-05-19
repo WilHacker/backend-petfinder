@@ -20,6 +20,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { Public } from '../../common/decorators/public.decorator';
 import { AddOwnerDto } from './dto/add-owner.dto';
 import { CreateMedicalRecordDto } from './dto/create-medical-record.dto';
+import { UpdateMedicalRecordDto } from './dto/update-medical-record.dto';
 import { CreatePetDto } from './dto/create-pet.dto';
 import { UpdatePetDto } from './dto/update-pet.dto';
 import { UpdatePetLocationDto } from './dto/update-pet-location.dto';
@@ -259,6 +260,17 @@ export class PetsController {
     @Body() dto: CreateMedicalRecordDto,
   ) {
     return this.petsService.addMedicalRecord(mascotaId, personaId, dto);
+  }
+
+  @Put(':id/medical/:registroId')
+  @ApiOperation({ summary: 'Editar un registro médico (todos los campos opcionales)' })
+  updateMedicalRecord(
+    @Param('id') mascotaId: string,
+    @Param('registroId', ParseIntPipe) registroId: number,
+    @CurrentUser('personaId') personaId: string,
+    @Body() dto: UpdateMedicalRecordDto,
+  ) {
+    return this.petsService.updateMedicalRecord(mascotaId, personaId, registroId, dto);
   }
 
   @Delete(':id/medical/:registroId')

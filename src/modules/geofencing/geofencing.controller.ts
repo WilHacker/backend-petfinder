@@ -13,6 +13,7 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { GeofencingService } from './geofencing.service';
 import { CreateZoneDto } from './dto/create-zone.dto';
 import { UpdateZoneDto } from './dto/update-zone.dto';
+import { ManageZonePetsDto } from './dto/manage-zone-pets.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
@@ -73,5 +74,50 @@ export class GeofencingController {
     @CurrentUser('personaId') personaId: string,
   ) {
     return this.geofencingService.removeZone(zonaId, personaId);
+  }
+
+  @Post('zones/:id/pets')
+  @ApiOperation({
+    summary: 'Agregar mascotas a una zona existente (mín. 1)',
+    description:
+      'Asigna las mascotas indicadas a la zona. Las que ya estaban asignadas se ignoran (idempotente). ' +
+      'Solo puedes agregar mascotas de las que eres propietario o cuidador.',
+  })
+  addPetsToZone(
+    @Param('id', ParseIntPipe) zonaId: number,
+    @CurrentUser('personaId') personaId: string,
+    @Body() dto: ManageZonePetsDto,
+  ) {
+    return this.geofencingService.addPetsToZone(zonaId, personaId, dto);
+  }
+
+  @Put('zones/:id/pets')
+  @ApiOperation({
+    summary: 'Reemplazar la lista completa de mascotas de una zona (mín. 1)',
+    description:
+      'Desasigna todas las mascotas actuales y asigna las indicadas en el body. ' +
+      'Útil para sincronizar la lista desde la app. Mínimo 1 mascota requerida.',
+  })
+  replacePetsInZone(
+    @Param('id', ParseIntPipe) zonaId: number,
+    @CurrentUser('personaId') personaId: string,
+    @Body() dto: ManageZonePetsDto,
+  ) {
+    return this.geofencingService.replacePetsInZone(zonaId, personaId, dto);
+  }
+
+  @Delete('zones/:id/pets')
+  @ApiOperation({
+    summary: 'Desasignar mascotas de una zona (mín. 1)',
+    description:
+      'Elimina la asociación entre las mascotas indicadas y la zona. ' +
+      'Si alguna no estaba asignada se ignora. No elimina la zona ni las mascotas.',
+  })
+  removePetsFromZone(
+    @Param('id', ParseIntPipe) zonaId: number,
+    @CurrentUser('personaId') personaId: string,
+    @Body() dto: ManageZonePetsDto,
+  ) {
+    return this.geofencingService.removePetsFromZone(zonaId, personaId, dto);
   }
 }

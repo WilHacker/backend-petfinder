@@ -1,8 +1,18 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Post, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Post,
+  Req,
+  Res,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AuthGuard } from '@nestjs/passport';
 import { Throttle } from '@nestjs/throttler';
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Public } from '../../common/decorators/public.decorator';
@@ -68,14 +78,23 @@ export class AuthController {
   @Get('google/callback')
   @Public()
   @UseGuards(AuthGuard('google'))
-  @ApiOperation({ summary: 'Callback de Google OAuth (uso interno)' })
-  async googleCallback(@Req() req: Request) {
+  @ApiOperation({ summary: 'Callback de Google OAuth — redirige a la app Android' })
+  async googleCallback(@Req() req: Request, @Res() res: Response) {
     const googleUser = req.user as {
       email: string;
       nombre: string;
       apellidoPaterno: string;
       fotoPerfilUrl?: string;
     };
-    return this.authService.findOrCreateGoogleUser(googleUser);
+    const result = await this.authService.findOrCreateGoogleUser(googleUser);
+
+    const params = new URLSearchParams({
+      accessToken: result.accessToken,
+      refreshToken: result.refreshToken,
+      userId: result.usuario.usuarioId,
+      rol: result.usuario.rol,
+      nombre: result.usuario.nombre,
+    });
+    return res.redirect(`petfinder://auth/callback?${params.toString()}`);
   }
 }

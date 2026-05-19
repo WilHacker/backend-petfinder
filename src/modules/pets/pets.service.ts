@@ -13,6 +13,7 @@ import { RealtimeService } from '../../infrastructure/realtime/realtime.service'
 import { NotificationsService } from '../../infrastructure/notifications/notifications.service';
 import { AddOwnerDto } from './dto/add-owner.dto';
 import { CreateMedicalRecordDto } from './dto/create-medical-record.dto';
+import { UpdateMedicalRecordDto } from './dto/update-medical-record.dto';
 import { CreatePetDto } from './dto/create-pet.dto';
 import { UpdatePetDto } from './dto/update-pet.dto';
 import { EstadoMascota, RelacionPropietario } from '@prisma/client';
@@ -470,6 +471,34 @@ export class PetsService {
         descripcion: dto.descripcion,
         fecha: dto.fecha ? new Date(dto.fecha) : null,
         veterinario: dto.veterinario ?? null,
+      },
+    });
+  }
+
+  async updateMedicalRecord(
+    mascotaId: string,
+    personaId: string,
+    registroId: number,
+    dto: UpdateMedicalRecordDto,
+  ) {
+    const mascota = await this.prisma.mascota.findUnique({
+      where: { mascotaId },
+      include: { propietarios: true },
+    });
+    if (!mascota) throw new NotFoundException('Mascota no encontrada');
+    this.checkOwnership(mascota, personaId);
+
+    const registro = await this.prisma.registroMedico.findUnique({ where: { registroId } });
+    if (!registro || registro.mascotaId !== mascotaId)
+      throw new NotFoundException('Registro médico no encontrado');
+
+    return this.prisma.registroMedico.update({
+      where: { registroId },
+      data: {
+        ...(dto.tipo !== undefined && { tipo: dto.tipo }),
+        ...(dto.descripcion !== undefined && { descripcion: dto.descripcion }),
+        ...(dto.fecha !== undefined && { fecha: dto.fecha ? new Date(dto.fecha) : null }),
+        ...(dto.veterinario !== undefined && { veterinario: dto.veterinario }),
       },
     });
   }

@@ -1,6 +1,6 @@
 # 🧪 Reporte de Pruebas API — PetFinder Backend
 
-**Fecha:** 2026-05-17 (pruebas) · **Actualizado:** 2026-05-18 (post-fixes + 3 nuevos endpoints)
+**Fecha:** 2026-05-17 (pruebas) · **Actualizado:** 2026-05-18 (post-fixes + 7 nuevos endpoints)
 **Entorno:** Local — `http://localhost:3000`
 **Herramienta:** `curl` ejecutado desde Bash
 **Ubicación de pruebas:** Cochabamba, Bolivia — UMSS (`lat: -17.3935, lng: -66.1457`)
@@ -163,33 +163,36 @@ Authorization: Bearer <accessToken>
 **Request:** navegar en el navegador a `GET /auth/google` (sin headers — público). Passport redirige automáticamente a la pantalla de selección de cuenta de Google.
 
 **Flujo:**
-1. `GET /auth/google` → redirige a Google OAuth consent screen
+
+1. `GET /auth/google` → 302 a `accounts.google.com` (OAuth consent screen)
 2. Usuario selecciona cuenta → Google redirige a `GET /auth/google/callback`
-3. Server procesa el perfil de Google y responde con JSON
+3. Server procesa el perfil, genera tokens y hace **302 al deep link de Android**
 
-**Response — 200 OK (cuenta existente vinculada automáticamente):**
+**Redirect — 302 (callback → app Android):**
 
-```json
-{
-  "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "refreshToken": "5df6bd17-9ce6-4c75-9c5d-e1d12660e729",
-  "usuario": {
-    "usuarioId": "a69b8530-4411-44cf-9656-c8032852404f",
-    "correoElectronico": "202203303@est.umss.edu",
-    "nombre": "WILLIAN ANDRES",
-    "apellidoPaterno": "ALMENDRAS CALIZAYA",
-    "rol": "usuario"
-  }
-}
 ```
+petfinder://auth/callback?accessToken=eyJ...&refreshToken=5df6bd17-...&userId=a69b8530-...&rol=usuario&nombre=WILLIAN+ANDRES
+```
+
+**Parámetros del deep link:**
+
+| Param | Valor |
+|---|---|
+| `accessToken` | JWT de acceso (24 h) |
+| `refreshToken` | Token de refresco (30 días, UUID) |
+| `userId` | `usuarioId` del usuario |
+| `rol` | `"admin"` o `"usuario"` |
+| `nombre` | Nombre del usuario (primer nombre del perfil Google) |
 
 **Estado:** ✅ OK
 
 **Notas:**
-- Email ya existente → hace login directo (no crea usuario nuevo). Vinculación automática.
-- Email nuevo → crea `Persona` + `Usuario` con `claveHash` de UUID aleatorio (el usuario no necesita contraseña).
-- Nombre y apellido vienen tal como están en el perfil de Google (pueden estar en mayúsculas).
-- **Bug detectado y corregido en esta sesión:** `findOrCreateGoogleUser` retornaba solo `{ accessToken, refreshToken }` sin el objeto `usuario`. Fix: ambos paths (existente y nuevo) ahora construyen y retornan el objeto `usuario` igual que `login` y `register`. Tests: 138/138 en verde.
+
+- Android intercepta `petfinder://auth/callback` con su intent filter → `MainActivity.onNewIntent()` guarda la sesión en DataStore y navega a Main. El Chrome Custom Tab se cierra solo al detectar el scheme personalizado.
+- Email ya existente → login directo (vinculación automática, no crea usuario nuevo).
+- Email nuevo → crea `Persona` + `Usuario` con `claveHash` de UUID aleatorio (sin contraseña).
+- Verificado: `GET /auth/google` → 302 a `accounts.google.com` con `scope=email+profile` ✅
+- **Cambio respecto a versión anterior:** el callback ya no devuelve JSON — ahora siempre hace 302 al deep link. Swagger/curl ven el `Location` header del redirect.
 
 ---
 
@@ -823,7 +826,53 @@ Las fotos previas se mantienen.
 
 ---
 
-## 4.19 — `DELETE /pets/{id}`
+## 4.19 — `PUT /pets/{id}/medical/{registroId}`
+
+**Request:**
+
+```http
+PUT /pets/776cb109-96d4-4e00-b4db-59ab18ac1325/medical/2
+Authorization: Bearer <accessToken>
+Content-Type: application/json
+```
+
+Todos los campos son opcionales — se actualiza solo lo que viene en el body:
+
+```json
+{ "veterinario": "Dr. García — Clínica VetUMSS Actualizado" }
+```
+
+**Response — 200 OK:**
+
+```json
+{
+  "registroId": 2,
+  "mascotaId": "776cb109-96d4-4e00-b4db-59ab18ac1325",
+  "tipo": "vacuna",
+  "descripcion": "Vacuna antirrábica anual",
+  "fecha": "2026-04-10T00:00:00.000Z",
+  "veterinario": "Dr. García — Clínica VetUMSS Actualizado",
+  "creadoEl": "2026-05-18T12:59:49.115Z"
+}
+```
+
+**Casos probados:**
+
+1. Partial update de solo `veterinario` → campo actualizado, resto intacto ✅
+2. Partial update de `tipo` + `descripcion` → ambos actualizados ✅
+3. `registroId` inexistente (`9999`) → 404 `"Registro médico no encontrado"` ✅
+
+**Estado:** ✅ OK
+
+**Notas:**
+
+- Partial update real: solo los campos presentes en el body se modifican.
+- Misma protección de ownership que `DELETE /pets/{id}/medical/{registroId}`.
+- Permite corregir errores sin tener que borrar y recrear el registro.
+
+---
+
+## 4.21 — `DELETE /pets/{id}`
 
 **Response — 200 OK:** `{ "message": "Mascota eliminada" }`
 
@@ -831,7 +880,7 @@ Las fotos previas se mantienen.
 
 ---
 
-## 4.20 — `GET /pets/{id}/scans`
+## 4.22 — `GET /pets/{id}/scans`
 
 **Request:** `GET /pets/776cb109-96d4-4e00-b4db-59ab18ac1325/scans` — requiere ser propietario/cuidador.
 
@@ -867,7 +916,7 @@ Las fotos previas se mantienen.
 
 ---
 
-## 4.21 — `GET /pets/{id}/reports`
+## 4.23 — `GET /pets/{id}/reports`
 
 **Request:** `GET /pets/776cb109-96d4-4e00-b4db-59ab18ac1325/reports` — requiere ser propietario/cuidador.
 
@@ -1056,6 +1105,122 @@ Las fotos previas se mantienen.
 **Response — 200 OK:** `{ "message": "Zona eliminada" }`
 
 **Estado:** ✅ OK
+
+---
+
+## 5.8 — `POST /geofencing/zones/{id}/pets`
+
+**Request:**
+
+```http
+POST /geofencing/zones/15/pets
+Authorization: Bearer <accessToken>
+Content-Type: application/json
+```
+
+```json
+{ "mascotaIds": ["df9d9bca-5bf2-4abe-9795-58e1e5f58685"] }
+```
+
+**Response — 201 Created:** zona actualizada con la nueva lista:
+
+```json
+{
+  "zona_id": 15,
+  "nombre_zona": "Casa UMSS (1km)",
+  "radio_metros": 1000,
+  "esta_activa": true,
+  "centro_lat": -17.3935,
+  "centro_lng": -66.1457,
+  "geometria_geojson": null,
+  "mascota_ids": [
+    "776cb109-96d4-4e00-b4db-59ab18ac1325",
+    "df9d9bca-5bf2-4abe-9795-58e1e5f58685"
+  ]
+}
+```
+
+**Casos probados:**
+
+1. Agregar mascota nueva → aparece en `mascota_ids` ✅
+2. Agregar mascota ya asignada (idempotente) → lista sin duplicados ✅
+3. Array vacío `[]` → 400 `"mascotaIds must contain at least 1 elements"` ✅
+
+**Estado:** ✅ OK
+
+**Notas:**
+
+- Usa `createMany + skipDuplicates` — nunca falla si la mascota ya estaba asignada.
+- Verifica ownership de la zona y de cada mascota del array antes de asignar.
+- Retorna la zona completa con la lista resultante.
+
+---
+
+## 5.9 — `PUT /geofencing/zones/{id}/pets`
+
+**Request:**
+
+```json
+{ "mascotaIds": ["776cb109-96d4-4e00-b4db-59ab18ac1325"] }
+```
+
+**Response — 200 OK:** zona con solo la mascota indicada:
+
+```json
+{
+  "zona_id": 15,
+  "mascota_ids": ["776cb109-96d4-4e00-b4db-59ab18ac1325"]
+}
+```
+
+**Casos probados:**
+
+1. Lista con 2 mascotas → PUT con solo 1 → queda exactamente 1 ✅
+2. Array vacío `[]` → 400 ✅
+
+**Estado:** ✅ OK
+
+**Notas:**
+
+- Reemplaza **toda** la lista: hace `deleteMany` + `createMany` en una transacción.
+- Útil para sincronizar la lista completa desde la app sin saber cuáles estaban antes.
+- Mínimo 1 mascota requerida (no se puede dejar una zona sin mascotas vía este endpoint).
+
+---
+
+## 5.10 — `DELETE /geofencing/zones/{id}/pets`
+
+**Request:**
+
+```json
+{ "mascotaIds": ["df9d9bca-5bf2-4abe-9795-58e1e5f58685"] }
+```
+
+**Response — 200 OK:**
+
+```json
+{ "message": "1 mascota(s) desasignada(s) de la zona" }
+```
+
+**Verificación posterior — `GET /geofencing/zones/15`:**
+
+```json
+{ "mascota_ids": ["776cb109-96d4-4e00-b4db-59ab18ac1325"] }
+```
+
+**Casos probados:**
+
+1. Desasignar mascota existente → 200 con conteo correcto ✅
+2. Desasignar mascota que ya no estaba → 200 con `0 mascota(s)` (no falla) ✅
+3. Array vacío `[]` → 400 `"must contain at least 1 elements"` ✅
+
+**Estado:** ✅ OK
+
+**Notas:**
+
+- No elimina la zona ni las mascotas — solo rompe la asociación `zona_mascotas`.
+- Si ninguna de las `mascotaIds` estaba asignada, responde 200 con `0 mascota(s)` (operación silenciosa).
+- No verifica ownership de cada mascota — solo de la zona.
 
 ---
 
@@ -1330,16 +1495,16 @@ Adicionalmente, los 3 métodos `sendPetLostAlert`, `sendQrScanAlert` y `sendZone
 | **Auth** | 6 | 6 | 6 | 0 | 0 |
 | **Users** | 9 | 9 | 9 | 0 | 0 |
 | **Tipos Mascota** | 3 | 3 | 3 | 0 | 0 |
-| **Pets** | 21 | 21 | 21 | 0 | 0 |
-| **Geofencing** | 6 | 6 | 6 | 0 | 0 |
+| **Pets** | 22 | 22 | 22 | 0 | 0 |
+| **Geofencing** | 9 | 9 | 9 | 0 | 0 |
 | **QR público** | 2 | 2 | 2 | 0 | 0 |
 | **Map** | 2 | 2 | 2 | 0 | 0 |
 | **WebSocket** | 1 namespace | 1 | 1 | 0 | 0 |
-| **TOTAL** | **50 + 1 WS** | **50** | **50** | **0** | **0** |
+| **TOTAL** | **53 + 1 WS** | **53** | **53** | **0** | **0** |
 
 ## Cifras (post-fixes)
 
-- **Tasa de éxito (happy path):** 50/50 = **100 %**
+- **Tasa de éxito (happy path):** 53/53 = **100 %**
 - **Bugs críticos:** 0 ✅ (E1 resuelto)
 - **Bugs medios:** 0 ✅ (E2, E3 resueltos)
 - **Mejoras menores:** 0 ✅ (E4, E5 resueltos)
@@ -1364,7 +1529,10 @@ Adicionalmente, los 3 métodos `sendPetLostAlert`, `sendQrScanAlert` y `sendZone
 5. ~~Implementar `PUT /users/me/fcm-token`~~ ✅ completado y probado.
 6. ~~Implementar `GET /pets/{id}/scans`~~ ✅ completado y probado.
 7. ~~Implementar `GET /pets/{id}/reports`~~ ✅ completado y probado.
-8. Agregar tests de integración (no solo unitarios) para la transición a `extraviada` y prevenir regresiones de E1.
+8. ~~Google OAuth callback redirige a deep link Android~~ ✅ completado — `petfinder://auth/callback?...`.
+9. ~~Implementar `PUT /pets/{id}/medical/{registroId}`~~ ✅ completado y probado.
+10. ~~Gestión masiva de mascotas en zonas~~ ✅ completado — `POST/PUT/DELETE /geofencing/zones/{id}/pets` probados.
+11. Agregar tests de integración (no solo unitarios) para la transición a `extraviada` y prevenir regresiones de E1.
 
 ---
 

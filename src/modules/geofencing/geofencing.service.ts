@@ -2,6 +2,7 @@ import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/commo
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateZoneDto } from './dto/create-zone.dto';
 import { UpdateZoneDto } from './dto/update-zone.dto';
+import { ManageZonePetsDto } from './dto/manage-zone-pets.dto';
 
 @Injectable()
 export class GeofencingService {
@@ -219,6 +220,41 @@ export class GeofencingService {
     await this.checkZoneAccess(zonaId, personaId);
     await this.prisma.zonaSegura.delete({ where: { zonaId } });
     return { message: 'Zona eliminada' };
+  }
+
+  async addPetsToZone(zonaId: number, personaId: string, dto: ManageZonePetsDto) {
+    await this.checkZoneAccess(zonaId, personaId);
+    for (const mascotaId of dto.mascotaIds) {
+      await this.checkPetOwnership(mascotaId, personaId);
+    }
+    await this.prisma.zonaMascota.createMany({
+      data: dto.mascotaIds.map((mascotaId) => ({ zonaId, mascotaId })),
+      skipDuplicates: true,
+    });
+    return this.findZone(zonaId, personaId);
+  }
+
+  async replacePetsInZone(zonaId: number, personaId: string, dto: ManageZonePetsDto) {
+    await this.checkZoneAccess(zonaId, personaId);
+    for (const mascotaId of dto.mascotaIds) {
+      await this.checkPetOwnership(mascotaId, personaId);
+    }
+    await this.prisma.$transaction([
+      this.prisma.zonaMascota.deleteMany({ where: { zonaId } }),
+      this.prisma.zonaMascota.createMany({
+        data: dto.mascotaIds.map((mascotaId) => ({ zonaId, mascotaId })),
+        skipDuplicates: true,
+      }),
+    ]);
+    return this.findZone(zonaId, personaId);
+  }
+
+  async removePetsFromZone(zonaId: number, personaId: string, dto: ManageZonePetsDto) {
+    await this.checkZoneAccess(zonaId, personaId);
+    const result = await this.prisma.zonaMascota.deleteMany({
+      where: { zonaId, mascotaId: { in: dto.mascotaIds } },
+    });
+    return { message: `${result.count} mascota(s) desasignada(s) de la zona` };
   }
 
   // ─── helpers ──────────────────────────────────────────────────────────────
