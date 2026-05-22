@@ -1,7 +1,8 @@
 # 🧪 Reporte de Pruebas API — PetFinder Backend
 
-**Fecha:** 2026-05-17 (pruebas) · **Actualizado:** 2026-05-22 (Sprint 3 & 4 — Etapa 4)
-**Entorno:** Local — `http://localhost:3000`
+**Fecha:** 2026-05-17 (pruebas) · **Actualizado:** 2026-05-22 (Sprint 3 & 4 — Etapa 5)
+**Entorno Local:** `http://localhost:3000`
+**Entorno Producción:** `https://backend-petfinder.onrender.com`
 **Herramienta:** `curl` ejecutado desde Bash
 **Ubicación de pruebas:** Cochabamba, Bolivia — UMSS (`lat: -17.3935, lng: -66.1457`)
 **Usuario de prueba:** `test.umss@petfinder.dev`
@@ -19,6 +20,166 @@ Cada endpoint documenta:
 2. **Response** — status code + body
 3. **Estado** — ✅ / ⚠️ / ❌
 4. **Notas** — observaciones
+
+---
+
+# 0. WebSocket — Integración Kotlin (Socket.IO)
+
+> **Producción:** `wss://backend-petfinder.onrender.com/realtime`
+> **Local:** `ws://localhost:3000/realtime`
+
+## 0.1 — Dependencia
+
+```kotlin
+// build.gradle.kts (app)
+implementation("io.socket:socket.io-client:2.1.0")
+```
+
+## 0.2 — Conexión con JWT
+
+```kotlin
+import io.socket.client.IO
+import io.socket.client.Socket
+
+object RealtimeClient {
+    private var socket: Socket? = null
+
+    fun connect(accessToken: String) {
+        val opts = IO.Options.builder()
+            .setAuth(mapOf("token" to accessToken))
+            .setTransports(arrayOf("websocket"))
+            .build()
+
+        socket = IO.socket("https://backend-petfinder.onrender.com/realtime", opts)
+
+        socket?.on(Socket.EVENT_CONNECT) {
+            Log.d("WS", "Conectado al namespace /realtime")
+        }
+
+        socket?.on(Socket.EVENT_CONNECT_ERROR) { args ->
+            Log.e("WS", "Error de conexión: ${args[0]}")
+            // Token expirado → renovar con POST /auth/refresh y reconectar
+        }
+
+        socket?.on(Socket.EVENT_DISCONNECT) {
+            Log.d("WS", "Desconectado")
+        }
+
+        socket?.connect()
+    }
+
+    fun disconnect() {
+        socket?.disconnect()
+        socket = null
+    }
+}
+```
+
+**Cuándo llamar `connect()`:** al hacer login / al arrancar la app con sesión guardada.
+**Cuándo llamar `disconnect()`:** al hacer logout o al destruir la Activity/ViewModel.
+
+## 0.3 — Eventos disponibles
+
+| Evento | Room | Cuándo se emite |
+|---|---|---|
+| `pet:location-updated` | `pet:{id}` | `PUT /pets/{id}/location` o GPS del dueño en paseo |
+| `pet:status-changed` | `pet:{id}` | `PUT /pets/{id}/status` |
+| `pet:profile-updated` | `pet:{id}` | `PUT /pets/{id}` · subir o borrar foto de mascota |
+| `pet:registered` | `user:{id}` | `POST /pets` (solo al dueño creador) |
+| `owner:location-updated` | `pet:{id}` | `PUT /users/me/location` (co-propietarios reciben GPS del dueño) |
+| `owner:added` | `pet:{id}` | `POST /pets/{id}/owners` |
+| `pet:assigned` | `user:{id}` | Al ser agregado como co-propietario |
+| `pet:entered-zone` | `pet:{id}` | GPS del dueño detecta mascota dentro de zona |
+| `pet:exited-zone` | `pet:{id}` | GPS del dueño detecta mascota fuera de zona |
+| `owner:profile-updated` | `pet:{id}` | `PUT /users/me/photo` (co-propietarios reciben nueva foto del dueño) |
+
+> Los rooms se unen **automáticamente** al conectarse — el servidor lee las mascotas del JWT y hace `socket.join(pet:{mascotaId})` por cada una.
+
+## 0.4 — Escuchar eventos
+
+```kotlin
+// En tu ViewModel o Repository
+
+fun listenPetEvents() {
+    // Ubicación de mascota actualizada
+    socket?.on("pet:location-updated") { args ->
+        val data = args[0] as JSONObject
+        val mascotaId = data.getString("mascotaId")
+        val lat       = data.getDouble("lat")
+        val lng       = data.getDouble("lng")
+        val estado    = data.getString("estado")
+        // Actualizar marcador en el mapa
+    }
+
+    // Estado de mascota cambiado
+    socket?.on("pet:status-changed") { args ->
+        val data    = args[0] as JSONObject
+        val mascotaId = data.getString("mascotaId")
+        val estado    = data.getString("estado")
+        // Actualizar UI — badge de estado
+    }
+
+    // Perfil de mascota actualizado (nombre, foto, etc.)
+    socket?.on("pet:profile-updated") { args ->
+        val data          = args[0] as JSONObject
+        val mascotaId     = data.getString("mascotaId")
+        val fotoPrincipal = data.optString("fotoPrincipalUrl", "")
+        // Recargar card de mascota si está en pantalla
+    }
+
+    // GPS de un co-propietario actualizado
+    socket?.on("owner:location-updated") { args ->
+        val data      = args[0] as JSONObject
+        val personaId = data.getString("personaId")
+        val lat       = data.getDouble("lat")
+        val lng       = data.getDouble("lng")
+        // Mover marcador del colaborador en el mapa
+    }
+
+    // Foto de perfil de un colaborador actualizada
+    socket?.on("owner:profile-updated") { args ->
+        val data          = args[0] as JSONObject
+        val personaId     = data.getString("personaId")
+        val fotoPerfilUrl = data.optString("fotoPerfilUrl", "")
+        // Recargar avatar del colaborador
+    }
+
+    // Mascota entró a zona segura
+    socket?.on("pet:entered-zone") { args ->
+        val data      = args[0] as JSONObject
+        val mascotaId = data.getString("mascotaId")
+        val zonaId    = data.getInt("zonaId")
+        // Mostrar notificación local
+    }
+
+    // Mascota salió de zona segura
+    socket?.on("pet:exited-zone") { args ->
+        val data      = args[0] as JSONObject
+        val mascotaId = data.getString("mascotaId")
+        val zonaId    = data.getInt("zonaId")
+        // Mostrar notificación local de salida
+    }
+}
+```
+
+## 0.5 — Manejo de token expirado
+
+```kotlin
+socket?.on(Socket.EVENT_CONNECT_ERROR) { args ->
+    val error = args[0].toString()
+    if (error.contains("401") || error.contains("Token")) {
+        // 1. POST /auth/refresh con el refreshToken guardado
+        // 2. Guardar el nuevo accessToken en DataStore
+        // 3. Llamar RealtimeClient.connect(newAccessToken)
+    }
+}
+```
+
+## 0.6 — Notas de producción (Render)
+
+- Render usa HTTPS/WSS — siempre usar `wss://` en producción, nunca `ws://`.
+- El plan gratuito de Render hace _spin down_ tras 15 min de inactividad — la primera conexión puede tardar ~30s en despertar el servidor. Las siguientes son instantáneas.
+- Si el servidor se reinicia, el cliente debe reconectar automáticamente. Socket.IO lo hace con `reconnection: true` (habilitado por defecto).
 
 ---
 
@@ -1402,38 +1563,119 @@ Content-Type: application/json
 
 ## 7.1 — `GET /map/public/lost-pets` (público)
 
-**Response — 200 OK:** array con mascotas en estado `extraviada` y su última ubicación conocida. En esta corrida: `[]` (Rocky está `en_casa`).
+**Query params opcionales:** `?tipoId=N` — filtra por tipo de mascota (mismo `tipoId` que `GET /tipos-mascota`).
+
+**Response — 200 OK:**
+
+```json
+[
+  {
+    "reporteId": 3,
+    "mascotaId": "1b0cac91-...",
+    "nombre": "Firulais",
+    "tipo": "Perro",
+    "fotoUrl": "https://res.cloudinary.com/.../firulais.jpg",
+    "ubicacion": { "lat": -17.3935, "lng": -66.1457 },
+    "fechaPerdida": "2026-05-19T12:33:42.562Z",
+    "recompensa": 200.00
+  }
+]
+```
+
+Devuelve `[]` si no hay mascotas extraviadas con ubicación conocida.
 
 **Estado:** ✅ OK
+
+**Notas:**
+
+- `ubicacion` es un objeto `{lat, lng}` (antes eran campos planos `lat` / `lng`).
+- `recompensa` es `null` si el dueño no ofrece recompensa económica.
+- Máx. 100 resultados, ordenados por `fecha_perdida DESC`.
 
 ---
 
 ## 7.2 — `GET /map/snapshot` (con auth)
 
+**Query params opcionales:** `?tipoId=N` — filtra la sección `desaparecidas` por tipo de mascota.
+
 **Response — 200 OK:**
 
 ```json
 {
-  "marcadores": {
-    "usuariosCompartidos": [],
-    "desaparecidas": []
-  },
+  "misMascotas": [
+    {
+      "mascotaId": "776cb109-...",
+      "nombre": "Rocky",
+      "estado": "en_casa",
+      "tipo": "Perro",
+      "fotoUrl": "https://res.cloudinary.com/.../rocky.jpg",
+      "ubicacion": { "lat": -17.3935, "lng": -66.1457 }
+    },
+    {
+      "mascotaId": "bf759b6e-...",
+      "nombre": "Firulais",
+      "estado": "extraviada",
+      "tipo": "Perro",
+      "fotoUrl": "https://res.cloudinary.com/.../firulais.jpg",
+      "ubicacion": { "lat": -17.394, "lng": -66.146 },
+      "recompensa": 500.00
+    }
+  ],
+  "colaboradores": [
+    {
+      "personaId": "d0a60bc2-...",
+      "nombre": "Maria",
+      "apellidoPaterno": "Gomez",
+      "fotoUrl": null,
+      "ubicacion": { "lat": -17.391, "lng": -66.152 }
+    }
+  ],
+  "desaparecidas": [
+    {
+      "reporteId": 3,
+      "mascotaId": "1b0cac91-...",
+      "nombre": "Lobo",
+      "tipo": "Perro",
+      "fotoUrl": "https://res.cloudinary.com/.../lobo.jpg",
+      "ubicacion": { "lat": -17.395, "lng": -66.148 },
+      "fechaPerdida": "2026-05-20T14:30:00.000Z",
+      "recompensa": 200.00
+    }
+  ],
   "zonas": [
     {
       "zonaId": 15,
       "nombre": "Casa UMSS (1km)",
-      "mascotas": [
-        { "mascotaId": "776cb109-...", "nombre": "Rocky", "estado": "en_casa", "fotoUrl": "...", "ubicacion": null }
-      ],
+      "estado": "activa",
       "tipo": "circulo",
       "centro": { "lat": -17.3935, "lng": -66.1457 },
-      "radioMetros": 500
+      "radioMetros": 1000,
+      "mascotaIds": ["776cb109-...", "bf759b6e-..."]
+    },
+    {
+      "zonaId": 16,
+      "nombre": "Plaza Colón",
+      "estado": "inactiva",
+      "tipo": "poligono",
+      "geometria": {
+        "type": "Polygon",
+        "coordinates": [[[-66.158, -17.391], [-66.152, -17.391], [-66.152, -17.395], [-66.158, -17.391]]]
+      },
+      "mascotaIds": ["776cb109-..."]
     }
   ]
 }
 ```
 
-**Estado:** ✅ OK — snapshot integral para el mapa del frontend.
+**Estado:** ✅ OK — estructura rediseñada en Etapa 5.
+
+**Notas:**
+
+- `misMascotas` — todas las mascotas propias del usuario autenticado. `recompensa` solo aparece cuando `estado = "extraviada"`.
+- `colaboradores` — co-propietarios/cuidadores con GPS activo. Solo aparecen los que tienen ubicación reciente; `nombre` y `apellidoPaterno` vienen separados. Solo incluye usuarios con GPS activo y `estadoCuenta = "activa"`.
+- `desaparecidas` — mascotas de otros usuarios con reporte abierto (máx. 50). `recompensa: null` si no hay. `ubicacion` es un objeto `{lat, lng}`, no campos planos.
+- `zonas` — `mascotaIds` es un array de UUIDs; el detalle de cada mascota se cruza con `misMascotas` en el cliente. Nuevo campo `estado: "activa" | "inactiva"`.
+- **Cambio respecto a versión anterior:** eliminado el wrapper `marcadores`, renombrado `usuariosCompartidos` → `colaboradores`, zonas ya no incluyen objeto mascota completo.
 
 ---
 
@@ -1473,10 +1715,25 @@ Content-Type: application/json
 
 **Estado:** ✅ OK — push se entrega <1s después del PUT HTTP.
 
-Otros eventos confirmados en los logs del server durante las pruebas:
+## 8.3 — Catálogo completo de eventos (actualizado Etapa 5)
 
-- `pet:registered` — cuando se crea una mascota
-- `pet:status-changed` — cuando cambia el estado de una mascota
+| Evento | Trigger HTTP | Room | Payload clave |
+|---|---|---|---|
+| `pet:location-updated` | `PUT /pets/{id}/location` · GPS dueño en paseo | `pet:{id}` | `mascotaId, lat, lng, estado` |
+| `pet:status-changed` | `PUT /pets/{id}/status` | `pet:{id}` | `mascotaId, nombre, estado` |
+| `pet:profile-updated` | `PUT /pets/{id}` · subir foto · borrar foto | `pet:{id}` | `mascotaId, nombre?, colorPrimario?, fotoPrincipalUrl?` |
+| `pet:registered` | `POST /pets` | `user:{id}` (dueño) | `mascotaId, nombre, estado, fotoPrincipalUrl` |
+| `owner:location-updated` | `PUT /users/me/location` | todos los `pet:{id}` del usuario | `personaId, usuarioId, lat, lng` |
+| `owner:added` | `POST /pets/{id}/owners` | `pet:{id}` | `mascotaId, personaId, nombreCompleto, tipoRelacion` |
+| `pet:assigned` | `POST /pets/{id}/owners` | `user:{id}` del nuevo dueño | mismo payload que `owner:added` |
+| `pet:entered-zone` | `PUT /users/me/location` (geofencing) | `pet:{id}` | `mascotaId, zonaId, fechaHora` |
+| `pet:exited-zone` | `PUT /users/me/location` (geofencing) | `pet:{id}` | `mascotaId, zonaId, duracionMinutos?` |
+| `owner:profile-updated` | `PUT /users/me/photo` | todos los `pet:{id}` del usuario | `personaId, fotoPerfilUrl, fechaActualizacion` |
+
+**Eventos nuevos en Etapa 5:**
+
+- `pet:profile-updated` ahora incluye `fotoPrincipalUrl` cuando se sube o borra una foto de mascota — antes el payload no notificaba el cambio de foto.
+- `owner:profile-updated` — nuevo evento; se emite cuando el usuario actualiza su foto de perfil, notificando a todos los co-propietarios de sus mascotas.
 
 ---
 
@@ -2251,25 +2508,150 @@ Content-Type: application/json
 
 ## Resumen de cobertura (actualizado Etapa 4)
 
-| Módulo        | Endpoints probados |
-|---------------|--------------------|
-| Auth          | 6                  |
-| Users         | 9                  |
-| Pets          | 24                 |
-| Geofencing    | 4                  |
-| Tipos Mascota | 5                  |
-| Map           | 3                  |
-| QR            | 2                  |
-| Sightings     | 4                  |
-| **Total**     | **57**             |
+| Módulo | Endpoints probados |
+|---|---|
+| Auth | 6 |
+| Users | 9 |
+| Pets | 24 |
+| Geofencing | 4 |
+| Tipos Mascota | 5 |
+| Map | 3 |
+| QR | 2 |
+| Sightings | 4 |
+| **Total** | **57** |
 
 ### Funcionalidades sin endpoint propio
 
 | Feature | Trigger | Estado |
-| ------- | ------- | ------ |
+|---|---|---|
 | Alerta Radio FCM (5 km) | `PUT /pets/:id/status → extraviada` | ✅ |
 | Alerta Zona FCM | `PUT /pets/:id/status → extraviada` | ✅ |
 | Alerta Dueños FCM | `PUT /pets/:id/status → extraviada` | ✅ |
 | WS `pet:profile-updated` | `PUT /pets/:id` | ✅ |
 | WS `pet:status-changed` | `PUT /pets/:id/status` | ✅ |
+
+---
+
+# Sprint 3 & 4 — Etapa 5
+
+**Fecha:** 2026-05-22
+**Tests:** 251/251 en verde · Lint: 0 errores
+
+---
+
+## S5-1 — `GET /map/snapshot` rediseñado
+
+**Motivación:** la respuesta anterior no incluía las mascotas propias del usuario, mezclaba datos en `marcadores.*` y las zonas traían el objeto mascota completo innecesariamente.
+
+**Cambios aplicados:**
+
+| Campo anterior | Campo nuevo | Cambio |
+|---|---|---|
+| `marcadores.usuariosCompartidos[]` | `colaboradores[]` | Renombrado; `nombre`+`apellidoPaterno` separados; `ubicacion: {lat,lng}` |
+| _(no existía)_ | `misMascotas[]` | Nuevo — mascotas propias con estado, tipo, foto, ubicación |
+| `marcadores.desaparecidas[]` | `desaparecidas[]` | Movido a raíz; agrega `fechaPerdida`, `recompensa`, `ubicacion: {lat,lng}` |
+| `zonas[].mascotas[]` (objeto completo) | `zonas[].mascotaIds[]` | Solo UUIDs — detalle en `misMascotas` |
+| _(no existía)_ | `zonas[].estado` | `"activa"` / `"inactiva"` desde `estaActiva` |
+
+**Campo `recompensa` en `misMascotas`:** solo aparece cuando `estado = "extraviada"` — no existe en el objeto para otros estados.
+
+---
+
+## S5-2 — `GET /map/public/lost-pets` actualizado
+
+**Cambios:**
+
+- `ubicacion` ahora es un objeto `{ lat, lng }` en lugar de campos planos.
+- Agrega `fechaPerdida` y `recompensa` (`null` si no hay).
+
+---
+
+## S5-3 — WebSocket: foto de mascota notifica en tiempo real
+
+**Problema anterior:** `pet:profile-updated` se emitía al editar datos textuales de la mascota, pero el payload no incluía la foto. Al subir o borrar fotos, los clientes conectados no se enteraban sin hacer un GET.
+
+**Fix aplicado:**
+
+- `POST /pets/{id}/photos` — tras la transacción, busca la foto principal actual y emite `pet:profile-updated` con `fotoPrincipalUrl`.
+- `DELETE /pets/{id}/photos/{fotoId}` — tras eliminar, busca la nueva principal y emite `pet:profile-updated` con `fotoPrincipalUrl`.
+
+**Payload extendido:**
+
+```json
+{
+  "event": "pet:profile-updated",
+  "data": {
+    "mascotaId": "776cb109-...",
+    "fotoPrincipalUrl": "https://res.cloudinary.com/.../nueva_foto.jpg",
+    "fechaActualizacion": "2026-05-22T..."
+  }
+}
+```
+
+---
+
+## S5-4 — WebSocket: nuevo evento `owner:profile-updated`
+
+**Problema anterior:** cuando un usuario actualizaba su foto de perfil (`PUT /users/me/photo`), los co-propietarios no recibían ninguna notificación en tiempo real — tenían que hacer GET para ver la nueva foto.
+
+**Fix aplicado:** `updateProfilePhoto()` ahora obtiene todos los rooms de mascotas del usuario y emite `owner:profile-updated` a cada uno.
+
+**Payload:**
+
+```json
+{
+  "event": "owner:profile-updated",
+  "data": {
+    "personaId": "15e8092d-...",
+    "fotoPerfilUrl": "https://res.cloudinary.com/.../nueva_foto.jpg",
+    "fechaActualizacion": "2026-05-22T..."
+  }
+}
+```
+
+**Kotlin — escuchar el evento:**
+
+```kotlin
+socket?.on("owner:profile-updated") { args ->
+    val data          = args[0] as JSONObject
+    val personaId     = data.getString("personaId")
+    val fotoPerfilUrl = data.optString("fotoPerfilUrl", "")
+    // Actualizar avatar del colaborador en el mapa y en la lista de propietarios
+}
+```
+
+---
+
+## Resumen de cobertura (actualizado Etapa 5)
+
+| Módulo | Endpoints probados |
+|---|---|
+| Auth | 6 |
+| Users | 9 |
+| Pets | 24 |
+| Geofencing | 4 |
+| Tipos Mascota | 5 |
+| Map | 3 |
+| QR | 2 |
+| Sightings | 4 |
+| **Total** | **57** |
+
+### Funcionalidades sin endpoint propio (Etapa 5)
+
+| Feature | Trigger | Estado |
+|---|---|---|
+| Alerta Radio FCM (5 km) | `PUT /pets/:id/status → extraviada` | ✅ |
+| Alerta Zona FCM | `PUT /pets/:id/status → extraviada` | ✅ |
+| Alerta Dueños FCM | `PUT /pets/:id/status → extraviada` | ✅ |
+| WS `pet:profile-updated` (texto) | `PUT /pets/:id` | ✅ |
+| WS `pet:profile-updated` (foto) | `POST/DELETE /pets/:id/photos` | ✅ nuevo |
+| WS `pet:status-changed` | `PUT /pets/:id/status` | ✅ |
+| WS `owner:profile-updated` | `PUT /users/me/photo` | ✅ nuevo |
+
+### Cifras
+
+- **Tests unitarios:** 251/251 en verde
+- **Lint:** 0 errores
+- **Endpoints documentados:** 57
+- **Eventos WebSocket:** 10 (8 anteriores + 2 nuevos en Etapa 5)
 

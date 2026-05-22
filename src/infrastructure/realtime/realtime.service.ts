@@ -51,6 +51,13 @@ export interface PetProfileUpdatedPayload {
   nombre?: string;
   colorPrimario?: string;
   rasgosParticulares?: string;
+  fotoPrincipalUrl?: string | null;
+  fechaActualizacion: Date;
+}
+
+export interface OwnerProfileUpdatedPayload {
+  personaId: string;
+  fotoPerfilUrl: string | null;
   fechaActualizacion: Date;
 }
 
@@ -134,6 +141,14 @@ export class RealtimeService {
     const room = `pet:${payload.mascotaId}`;
     this.server.to(room).emit('pet:exited-zone', payload);
     this.logger.debug(`[WS] pet:exited-zone → room ${room} (zona ${payload.zonaId})`);
+  }
+
+  emitOwnerProfileUpdated(petRooms: string[], payload: OwnerProfileUpdatedPayload): void {
+    if (!this.server || petRooms.length === 0) return;
+    petRooms.forEach((room) => {
+      this.server!.to(room).emit('owner:profile-updated', payload);
+    });
+    this.logger.debug(`[WS] owner:profile-updated → ${petRooms.length} rooms`);
   }
 
   emitOwnerAdded(

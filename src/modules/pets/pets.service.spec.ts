@@ -74,6 +74,7 @@ const mockPrisma = {
   },
   fotoMascota: {
     create: jest.fn(),
+    findFirst: jest.fn(),
     deleteMany: jest.fn(),
     delete: jest.fn(),
     updateMany: jest.fn(),
@@ -451,6 +452,7 @@ describe('PetsService', () => {
       mockCloudinary.uploadBuffer.mockResolvedValue({ secure_url: FOTO_URL });
       mockPrisma.fotoMascota.create.mockResolvedValue(mockFoto);
       mockPrisma.fotoMascota.updateMany.mockResolvedValue({ count: 1 });
+      mockPrisma.fotoMascota.findFirst.mockResolvedValue(mockFoto);
       mockPrisma.$transaction.mockImplementation((ops: unknown) =>
         Array.isArray(ops) ? Promise.all(ops as Promise<unknown>[]) : (ops as () => unknown)(),
       );
@@ -549,6 +551,17 @@ describe('PetsService', () => {
         ForbiddenException,
       );
     });
+
+    it('emite pet:profile-updated con fotoPrincipalUrl tras subir fotos', async () => {
+      await service.uploadPhotos(MASCOTA_ID, PERSONA_ID, [makeFile()]);
+
+      expect(mockRealtime.emitPetProfileUpdated).toHaveBeenCalledWith(
+        expect.objectContaining({
+          mascotaId: MASCOTA_ID,
+          fotoPrincipalUrl: FOTO_URL,
+        }),
+      );
+    });
   });
 
   // ───────────────────────── deletePhoto ───────────────────────
@@ -569,12 +582,32 @@ describe('PetsService', () => {
     it('elimina la foto de Cloudinary y de la BD', async () => {
       mockPrisma.mascota.findUnique.mockResolvedValue(mascotaConDosFotos);
       mockPrisma.fotoMascota.delete.mockResolvedValue(mockFoto);
+      mockPrisma.fotoMascota.findFirst.mockResolvedValue({
+        fotoUrl: 'https://cdn.example.com/nueva-principal.jpg',
+      });
 
       const result = await service.deletePhoto(MASCOTA_ID, PERSONA_ID, FOTO_ID);
 
       expect(mockCloudinary.deleteByUrl).toHaveBeenCalledWith(FOTO_URL);
       expect(mockPrisma.fotoMascota.delete).toHaveBeenCalledWith({ where: { fotoId: FOTO_ID } });
       expect(result).toEqual({ message: 'Foto eliminada' });
+    });
+
+    it('emite pet:profile-updated con la nueva fotoPrincipalUrl tras eliminar', async () => {
+      mockPrisma.mascota.findUnique.mockResolvedValue(mascotaConDosFotos);
+      mockPrisma.fotoMascota.delete.mockResolvedValue(mockFoto);
+      mockPrisma.fotoMascota.findFirst.mockResolvedValue({
+        fotoUrl: 'https://cdn.example.com/nueva-principal.jpg',
+      });
+
+      await service.deletePhoto(MASCOTA_ID, PERSONA_ID, FOTO_ID);
+
+      expect(mockRealtime.emitPetProfileUpdated).toHaveBeenCalledWith(
+        expect.objectContaining({
+          mascotaId: MASCOTA_ID,
+          fotoPrincipalUrl: 'https://cdn.example.com/nueva-principal.jpg',
+        }),
+      );
     });
 
     it('lanza BadRequestException si es la única foto', async () => {

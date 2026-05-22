@@ -57,6 +57,7 @@ const mockRealtime = {
   emitPetLocationUpdated: jest.fn(),
   emitPetEnteredZone: jest.fn(),
   emitPetExitedZone: jest.fn(),
+  emitOwnerProfileUpdated: jest.fn(),
 };
 
 describe('UsersService', () => {
@@ -522,6 +523,34 @@ describe('UsersService', () => {
       await service.updateProfilePhoto('usuario-uuid', fakeFile);
 
       expect(mockCloudinary.deleteByUrl).toHaveBeenCalledWith('https://cdn.cloudinary.com/old.jpg');
+    });
+
+    it('emite owner:profile-updated a los rooms de mascotas del usuario', async () => {
+      mockPrisma.usuario.findUnique.mockResolvedValue({
+        ...mockUsuario,
+        persona: { fotoPerfilUrl: null },
+      });
+      mockCloudinary.uploadBuffer.mockResolvedValue({
+        secure_url: 'https://cdn.cloudinary.com/new.jpg',
+      });
+      mockPrisma.persona.update.mockResolvedValue({
+        personaId: 'persona-uuid',
+        fotoPerfilUrl: 'https://cdn.cloudinary.com/new.jpg',
+      });
+      mockPrisma.propietarioMascota.findMany.mockResolvedValue([
+        { mascotaId: 'mascota-uuid-1' },
+        { mascotaId: 'mascota-uuid-2' },
+      ]);
+
+      await service.updateProfilePhoto('usuario-uuid', fakeFile);
+
+      expect(mockRealtime.emitOwnerProfileUpdated).toHaveBeenCalledWith(
+        ['pet:mascota-uuid-1', 'pet:mascota-uuid-2'],
+        expect.objectContaining({
+          personaId: 'persona-uuid',
+          fotoPerfilUrl: 'https://cdn.cloudinary.com/new.jpg',
+        }),
+      );
     });
 
     it('lanza NotFoundException si el usuario no existe', async () => {

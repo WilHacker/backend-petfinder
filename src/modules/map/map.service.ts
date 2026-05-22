@@ -1,6 +1,17 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 
+type MyPetRow = {
+  mascota_id: string;
+  nombre: string;
+  estado: string;
+  tipo_nombre: string;
+  foto_url: string | null;
+  lat: number | null;
+  lng: number | null;
+  recompensa: string | null;
+};
+
 type PublicLostPetRow = {
   reporte_id: number;
   mascota_id: string;
@@ -10,6 +21,7 @@ type PublicLostPetRow = {
   lat: number;
   lng: number;
   fecha_perdida: Date;
+  recompensa: string | null;
 };
 
 type CoOwnerRow = {
@@ -29,26 +41,19 @@ type LostPetRow = {
   foto_principal_url: string | null;
   lat: number | null;
   lng: number | null;
+  fecha_perdida: Date;
+  recompensa: string | null;
 };
 
 type ZonaSnapshotRow = {
   zona_id: number;
   nombre_zona: string | null;
+  esta_activa: boolean | null;
   radio_metros: number | null;
   centro_lat: number | null;
   centro_lng: number | null;
   geometria_json: string | null;
-  // JSON_AGG devuelve objeto ya parseado por el driver pg
-  mascotas:
-    | Array<{
-        mascotaId: string;
-        nombre: string;
-        estado: string | null;
-        fotoUrl: string | null;
-        lat: number | null;
-        lng: number | null;
-      }>
-    | string;
+  mascota_ids: string[] | string;
 };
 
 @Injectable()
@@ -56,7 +61,34 @@ export class MapService {
   constructor(private readonly prisma: PrismaService) {}
 
   async getSnapshot(personaId: string, tipoId?: number) {
-    const [coOwnersRaw, lostPetsRaw, zonasRaw] = await Promise.all([
+    const [misMascotasRaw, coOwnersRaw, lostPetsRaw, zonasRaw] = await Promise.all([
+      // Mascotas propias del usuario autenticado
+      this.prisma.$queryRaw<MyPetRow[]>`
+        SELECT
+          m.mascota_id::text,
+          m.nombre,
+          m.estado::text,
+          COALESCE(tm.nombre, 'Sin tipo') AS tipo_nombre,
+          (SELECT f.foto_url FROM fotos_mascota f
+           WHERE f.mascota_id = m.mascota_id
+           ORDER BY f.es_principal DESC, f.foto_id ASC
+           LIMIT 1) AS foto_url,
+          CASE WHEN m.ultima_ubicacion_conocida IS NOT NULL
+               THEN ST_Y(m.ultima_ubicacion_conocida::geometry) END AS lat,
+          CASE WHEN m.ultima_ubicacion_conocida IS NOT NULL
+               THEN ST_X(m.ultima_ubicacion_conocida::geometry) END AS lng,
+          CASE WHEN m.estado = 'extraviada'
+               THEN r.recompensa::text END AS recompensa
+        FROM propietarios_mascota pm
+        JOIN mascotas m        ON m.mascota_id = pm.mascota_id
+        LEFT JOIN tipos_mascota tm ON tm.tipo_id = m.tipo_id
+        LEFT JOIN reportes_extravio r
+               ON r.mascota_id    = m.mascota_id
+              AND r.estado_reporte = 'abierto'
+        WHERE pm.persona_id = ${personaId}::uuid
+        ORDER BY m.nombre
+      `,
+
       // Co-propietarios/cuidadores con GPS activo
       this.prisma.$queryRaw<CoOwnerRow[]>`
         SELECT DISTINCT ON (p.persona_id)
@@ -90,7 +122,9 @@ export class MapService {
            ORDER BY f.es_principal DESC, f.foto_id ASC
            LIMIT 1) AS foto_principal_url,
           ST_Y(r.ultima_ubicacion_conocida::geometry) AS lat,
-          ST_X(r.ultima_ubicacion_conocida::geometry) AS lng
+          ST_X(r.ultima_ubicacion_conocida::geometry) AS lng,
+          r.fecha_perdida,
+          r.recompensa::text
         FROM reportes_extravio r
         JOIN mascotas m        ON m.mascota_id = r.mascota_id
         LEFT JOIN tipos_mascota tm ON tm.tipo_id = m.tipo_id
@@ -101,88 +135,75 @@ export class MapService {
         LIMIT 50
       `,
 
-      // Zonas seguras del usuario con sus mascotas asociadas
+      // Zonas seguras del usuario — solo IDs de mascotas asociadas
       this.prisma.$queryRaw<ZonaSnapshotRow[]>`
         SELECT
           z.zona_id,
           z.nombre_zona,
+          z.esta_activa,
           z.radio_metros,
           CASE WHEN z.punto_central IS NOT NULL
                THEN ST_Y(z.punto_central::geometry) END AS centro_lat,
           CASE WHEN z.punto_central IS NOT NULL
                THEN ST_X(z.punto_central::geometry) END AS centro_lng,
           ST_AsGeoJSON(z.geometria) AS geometria_json,
-          JSON_AGG(
-            JSON_BUILD_OBJECT(
-              'mascotaId', zm.mascota_id::text,
-              'nombre',    m.nombre,
-              'estado',    m.estado::text,
-              'fotoUrl',   (SELECT f.foto_url FROM fotos_mascota f
-                            WHERE f.mascota_id = m.mascota_id
-                            ORDER BY f.es_principal DESC, f.foto_id ASC
-                            LIMIT 1),
-              'lat',       ST_Y(m.ultima_ubicacion_conocida::geometry),
-              'lng',       ST_X(m.ultima_ubicacion_conocida::geometry)
-            ) ORDER BY m.nombre
-          ) AS mascotas
+          ARRAY_AGG(zm.mascota_id::text ORDER BY m.nombre) AS mascota_ids
         FROM zonas_seguras z
         JOIN zona_mascotas zm ON zm.zona_id = z.zona_id
         JOIN mascotas m       ON m.mascota_id = zm.mascota_id
         JOIN propietarios_mascota pm ON pm.mascota_id = zm.mascota_id
         WHERE pm.persona_id = ${personaId}::uuid
-          AND z.esta_activa = true
-        GROUP BY z.zona_id, z.nombre_zona, z.radio_metros, z.punto_central, z.geometria
+        GROUP BY z.zona_id, z.nombre_zona, z.esta_activa, z.radio_metros, z.punto_central, z.geometria
         ORDER BY z.zona_id
       `,
     ]);
 
     return {
-      marcadores: {
-        usuariosCompartidos: coOwnersRaw.map((o) => ({
-          personaId: o.persona_id,
-          nombre: `${o.nombre} ${o.apellido_paterno}`.trim(),
-          fotoUrl: o.foto_perfil_url,
-          lat: Number(o.lat),
-          lng: Number(o.lng),
-        })),
-        desaparecidas: lostPetsRaw.map((r) => ({
-          reporteId: Number(r.reporte_id),
-          mascotaId: r.mascota_id,
-          nombre: r.nombre,
-          tipo: r.tipo_nombre,
-          fotoUrl: r.foto_principal_url,
-          lat: Number(r.lat),
-          lng: Number(r.lng),
-        })),
-      },
-      zonas: zonasRaw.map((z) => {
-        const mascotas =
-          typeof z.mascotas === 'string'
-            ? (JSON.parse(z.mascotas) as ZonaSnapshotRow['mascotas'])
-            : z.mascotas;
-
-        const mascotasMapped = (
-          mascotas as Array<{
-            mascotaId: string;
-            nombre: string;
-            estado: string | null;
-            fotoUrl: string | null;
-            lat: number | null;
-            lng: number | null;
-          }>
-        ).map((m) => ({
-          mascotaId: m.mascotaId,
+      misMascotas: misMascotasRaw.map((m) => {
+        const base = {
+          mascotaId: m.mascota_id,
           nombre: m.nombre,
           estado: m.estado,
-          fotoUrl: m.fotoUrl,
+          tipo: m.tipo_nombre,
+          fotoUrl: m.foto_url,
           ubicacion:
             m.lat != null && m.lng != null ? { lat: Number(m.lat), lng: Number(m.lng) } : null,
-        }));
+        };
+        if (m.estado === 'extraviada' && m.recompensa != null) {
+          return { ...base, recompensa: Number(m.recompensa) };
+        }
+        return base;
+      }),
+
+      colaboradores: coOwnersRaw.map((o) => ({
+        personaId: o.persona_id,
+        nombre: o.nombre,
+        apellidoPaterno: o.apellido_paterno,
+        fotoUrl: o.foto_perfil_url,
+        ubicacion: { lat: Number(o.lat), lng: Number(o.lng) },
+      })),
+
+      desaparecidas: lostPetsRaw.map((r) => ({
+        reporteId: Number(r.reporte_id),
+        mascotaId: r.mascota_id,
+        nombre: r.nombre,
+        tipo: r.tipo_nombre,
+        fotoUrl: r.foto_principal_url,
+        ubicacion: { lat: Number(r.lat), lng: Number(r.lng) },
+        fechaPerdida: r.fecha_perdida,
+        recompensa: r.recompensa != null ? Number(r.recompensa) : null,
+      })),
+
+      zonas: zonasRaw.map((z) => {
+        const mascotaIds = Array.isArray(z.mascota_ids)
+          ? z.mascota_ids
+          : (JSON.parse(z.mascota_ids) as string[]);
 
         const base = {
           zonaId: Number(z.zona_id),
           nombre: z.nombre_zona,
-          mascotas: mascotasMapped,
+          estado: z.esta_activa ? 'activa' : 'inactiva',
+          mascotaIds,
         };
 
         if (z.radio_metros != null) {
@@ -217,7 +238,8 @@ export class MapService {
          LIMIT 1) AS foto_principal_url,
         ST_Y(r.ultima_ubicacion_conocida::geometry) AS lat,
         ST_X(r.ultima_ubicacion_conocida::geometry) AS lng,
-        r.fecha_perdida
+        r.fecha_perdida,
+        r.recompensa::text
       FROM reportes_extravio r
       JOIN mascotas m        ON m.mascota_id = r.mascota_id
       LEFT JOIN tipos_mascota tm ON tm.tipo_id = m.tipo_id
@@ -234,9 +256,9 @@ export class MapService {
       nombre: r.nombre,
       tipo: r.tipo_nombre,
       fotoUrl: r.foto_principal_url,
-      lat: Number(r.lat),
-      lng: Number(r.lng),
+      ubicacion: { lat: Number(r.lat), lng: Number(r.lng) },
       fechaPerdida: r.fecha_perdida,
+      recompensa: r.recompensa != null ? Number(r.recompensa) : null,
     }));
   }
 }

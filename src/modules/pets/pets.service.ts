@@ -665,7 +665,7 @@ export class PetsService {
       });
     }
 
-    return this.prisma.$transaction(
+    const nuevasFotos = await this.prisma.$transaction(
       uploads.map((upload, i) =>
         this.prisma.fotoMascota.create({
           data: {
@@ -676,6 +676,18 @@ export class PetsService {
         }),
       ),
     );
+
+    const principal = await this.prisma.fotoMascota.findFirst({
+      where: { mascotaId, esPrincipal: true },
+      orderBy: { fotoId: 'asc' },
+    });
+    this.realtime.emitPetProfileUpdated({
+      mascotaId,
+      fotoPrincipalUrl: principal?.fotoUrl ?? null,
+      fechaActualizacion: new Date(),
+    });
+
+    return nuevasFotos;
   }
 
   async deletePhoto(mascotaId: string, personaId: string, fotoId: number) {
@@ -694,6 +706,17 @@ export class PetsService {
 
     await this.cloudinary.deleteByUrl(foto.fotoUrl);
     await this.prisma.fotoMascota.delete({ where: { fotoId } });
+
+    const principal = await this.prisma.fotoMascota.findFirst({
+      where: { mascotaId, esPrincipal: true },
+      orderBy: { fotoId: 'asc' },
+    });
+    this.realtime.emitPetProfileUpdated({
+      mascotaId,
+      fotoPrincipalUrl: principal?.fotoUrl ?? null,
+      fechaActualizacion: new Date(),
+    });
+
     return { message: 'Foto eliminada' };
   }
 

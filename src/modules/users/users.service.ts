@@ -111,11 +111,24 @@ export class UsersService {
 
     const upload = await this.cloudinary.uploadBuffer(file.buffer, `personas/${usuario.personaId}`);
 
-    return this.prisma.persona.update({
+    const updated = await this.prisma.persona.update({
       where: { personaId: usuario.personaId },
       data: { fotoPerfilUrl: upload.secure_url },
       select: { personaId: true, fotoPerfilUrl: true },
     });
+
+    const relaciones = await this.prisma.propietarioMascota.findMany({
+      where: { personaId: usuario.personaId },
+      select: { mascotaId: true },
+    });
+    const petRooms = relaciones.map((r) => `pet:${r.mascotaId}`);
+    this.realtime.emitOwnerProfileUpdated(petRooms, {
+      personaId: usuario.personaId,
+      fotoPerfilUrl: updated.fotoPerfilUrl,
+      fechaActualizacion: new Date(),
+    });
+
+    return updated;
   }
 
   async addContact(usuarioId: string, dto: AddContactDto) {
