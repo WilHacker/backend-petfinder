@@ -19,4 +19,9 @@ export class AddContactDto {
   @IsOptional()
   @IsBoolean({ message: 'El campo esPrincipal debe ser verdadero o falso' })
   esPrincipal?: boolean;
+
+  @ApiPropertyOptional({ default: false, description: 'Marcar como contacto de emergencia' })
+  @IsOptional()
+  @IsBoolean({ message: 'El campo esEmergencia debe ser verdadero o falso' })
+  esEmergencia?: boolean;
 }

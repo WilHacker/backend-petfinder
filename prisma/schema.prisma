@@ -91,11 +91,12 @@ model Usuario {
 }
 
 model MedioContacto {
-  contactoId  Int          @id @default(autoincrement()) @map("contacto_id")
-  personaId   String       @map("persona_id") @db.Uuid
-  tipo        TipoContacto
-  valor       String       @db.VarChar(50)
-  esPrincipal Boolean?     @default(false) @map("es_principal")
+  contactoId   Int          @id @default(autoincrement()) @map("contacto_id")
+  personaId    String       @map("persona_id") @db.Uuid
+  tipo         TipoContacto
+  valor        String       @db.VarChar(50)
+  esPrincipal  Boolean?     @default(false) @map("es_principal")
+  esEmergencia Boolean      @default(false) @map("es_emergencia")
 
   persona Persona @relation(fields: [personaId], references: [personaId], onDelete: Cascade)
 

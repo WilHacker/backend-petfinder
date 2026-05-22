@@ -55,7 +55,7 @@ type ZonaSnapshotRow = {
 export class MapService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async getSnapshot(personaId: string) {
+  async getSnapshot(personaId: string, tipoId?: number) {
     const [coOwnersRaw, lostPetsRaw, zonasRaw] = await Promise.all([
       // Co-propietarios/cuidadores con GPS activo
       this.prisma.$queryRaw<CoOwnerRow[]>`
@@ -96,6 +96,7 @@ export class MapService {
         LEFT JOIN tipos_mascota tm ON tm.tipo_id = m.tipo_id
         WHERE r.estado_reporte              = 'abierto'
           AND r.ultima_ubicacion_conocida IS NOT NULL
+          AND (${tipoId ?? null}::int IS NULL OR m.tipo_id = ${tipoId ?? null}::int)
         ORDER BY r.fecha_perdida DESC
         LIMIT 50
       `,
@@ -203,7 +204,7 @@ export class MapService {
   }
 
   // Endpoint público — no requiere autenticación
-  async getPublicLostPets() {
+  async getPublicLostPets(tipoId?: number) {
     const rows = await this.prisma.$queryRaw<PublicLostPetRow[]>`
       SELECT
         r.reporte_id,
@@ -222,6 +223,7 @@ export class MapService {
       LEFT JOIN tipos_mascota tm ON tm.tipo_id = m.tipo_id
       WHERE r.estado_reporte              = 'abierto'
         AND r.ultima_ubicacion_conocida IS NOT NULL
+        AND (${tipoId ?? null}::int IS NULL OR m.tipo_id = ${tipoId ?? null}::int)
       ORDER BY r.fecha_perdida DESC
       LIMIT 100
     `;

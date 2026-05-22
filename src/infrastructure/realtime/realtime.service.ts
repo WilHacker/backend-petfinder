@@ -46,6 +46,14 @@ export interface ZoneEventPayload {
   duracionMinutos?: number;
 }
 
+export interface PetProfileUpdatedPayload {
+  mascotaId: string;
+  nombre?: string;
+  colorPrimario?: string;
+  rasgosParticulares?: string;
+  fechaActualizacion: Date;
+}
+
 @Injectable()
 export class RealtimeService {
   private readonly logger = new Logger(RealtimeService.name);
@@ -107,6 +115,13 @@ export class RealtimeService {
    * Notifica a todos los propietarios existentes que se agregó un nuevo dueño/cuidador.
    * Fuerza al nuevo owner a unirse al room de la mascota sin reconectar.
    */
+  emitPetProfileUpdated(payload: PetProfileUpdatedPayload): void {
+    if (!this.server) return;
+    const room = `pet:${payload.mascotaId}`;
+    this.server.to(room).emit('pet:profile-updated', payload);
+    this.logger.debug(`[WS] pet:profile-updated → room ${room}`);
+  }
+
   emitPetEnteredZone(payload: ZoneEventPayload): void {
     if (!this.server) return;
     const room = `pet:${payload.mascotaId}`;

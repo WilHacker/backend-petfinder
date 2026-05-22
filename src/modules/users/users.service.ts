@@ -9,6 +9,7 @@ import { RealtimeService } from '../../infrastructure/realtime/realtime.service'
 import { CloudinaryService } from '../../cloudinary/cloudinary.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { AddContactDto } from './dto/add-contact.dto';
+import { UpdateContactDto } from './dto/update-contact.dto';
 import { UpdateLocationDto } from './dto/update-location.dto';
 import { UpdateFcmTokenDto } from './dto/update-fcm-token.dto';
 
@@ -129,7 +130,53 @@ export class UsersService {
         tipo: dto.tipo,
         valor: dto.valor,
         esPrincipal: dto.esPrincipal ?? false,
+        esEmergencia: dto.esEmergencia ?? false,
       },
+    });
+  }
+
+  async listContacts(usuarioId: string) {
+    const usuario = await this.prisma.usuario.findUnique({
+      where: { usuarioId },
+      select: { personaId: true },
+    });
+    if (!usuario) throw new NotFoundException('Usuario no encontrado');
+
+    return this.prisma.medioContacto.findMany({
+      where: { personaId: usuario.personaId },
+      orderBy: [{ esPrincipal: 'desc' }, { esEmergencia: 'desc' }, { contactoId: 'asc' }],
+    });
+  }
+
+  async updateContact(usuarioId: string, contactoId: number, dto: UpdateContactDto) {
+    const usuario = await this.prisma.usuario.findUnique({ where: { usuarioId } });
+    if (!usuario) throw new NotFoundException('Usuario no encontrado');
+
+    const contacto = await this.prisma.medioContacto.findUnique({ where: { contactoId } });
+    if (!contacto) throw new NotFoundException('Contacto no encontrado');
+    if (contacto.personaId !== usuario.personaId)
+      throw new ForbiddenException('No tienes permiso sobre este contacto');
+
+    return this.prisma.medioContacto.update({
+      where: { contactoId },
+      data: {
+        ...(dto.valor !== undefined && { valor: dto.valor }),
+        ...(dto.esPrincipal !== undefined && { esPrincipal: dto.esPrincipal }),
+        ...(dto.esEmergencia !== undefined && { esEmergencia: dto.esEmergencia }),
+      },
+    });
+  }
+
+  async listEmergencyContacts(usuarioId: string) {
+    const usuario = await this.prisma.usuario.findUnique({
+      where: { usuarioId },
+      select: { personaId: true },
+    });
+    if (!usuario) throw new NotFoundException('Usuario no encontrado');
+
+    return this.prisma.medioContacto.findMany({
+      where: { personaId: usuario.personaId, esEmergencia: true },
+      orderBy: { esPrincipal: 'desc' },
     });
   }
 

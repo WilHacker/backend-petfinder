@@ -17,6 +17,7 @@ import { GeofencingModule } from './modules/geofencing/geofencing.module';
 import { TiposMascotaModule } from './modules/tipos-mascota/tipos-mascota.module';
 import { MapModule } from './modules/map/map.module';
 import { QrModule } from './modules/qr/qr.module';
+import { SightingsModule } from './modules/sightings/sightings.module';
 
 @Module({
   imports: [
@@ -46,6 +47,7 @@ import { QrModule } from './modules/qr/qr.module';
     TiposMascotaModule,
     MapModule,
     QrModule,
+    SightingsModule,
   ],
   controllers: [AppController],
   providers: [

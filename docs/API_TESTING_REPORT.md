@@ -1,6 +1,6 @@
 # 🧪 Reporte de Pruebas API — PetFinder Backend
 
-**Fecha:** 2026-05-17 (pruebas) · **Actualizado:** 2026-05-19 (post-fixes + 9 nuevos endpoints)
+**Fecha:** 2026-05-17 (pruebas) · **Actualizado:** 2026-05-22 (Sprint 3 & 4 — Etapa 4)
 **Entorno:** Local — `http://localhost:3000`
 **Herramienta:** `curl` ejecutado desde Bash
 **Ubicación de pruebas:** Cochabamba, Bolivia — UMSS (`lat: -17.3935, lng: -66.1457`)
@@ -1687,6 +1687,589 @@ Adicionalmente, los 3 métodos `sendPetLostAlert`, `sendQrScanAlert` y `sendZone
 11. Agregar tests de integración (no solo unitarios) para la transición a `extraviada` y prevenir regresiones de E1.
 12. ~~Implementar `GET /pets/public/{token}` — datos públicos por token QR~~ ✅ completado y probado.
 13. ~~Implementar `POST /pets/public/{token}/scan` — escaneo con ubicación opcional~~ ✅ completado y probado.
+14. ~~Sprint 3 & 4 — Etapa 1: recompensa en card, filtro mapa, QR tamaño, WS tiempo real~~ ✅ completado y probado.
 
 ---
+
+---
+
+# 🚀 Sprint 3 & 4 — Nuevas funcionalidades
+
+**Fecha:** 2026-05-21
+**Entorno:** Local — `http://localhost:3000`
+**Tests:** 138/138 en verde · TypeScript: 0 errores
+
+---
+
+## S3-1 — Recompensa activa en perfil público QR
+
+**Endpoint afectado:** `GET /pets/public/{token}` y `GET /pets/{id}/card`
+
+**Cambio:** `findPetCard()` ahora incluye el reporte de extravío abierto más reciente. Si la mascota tiene un reporte con `estado_reporte = 'abierto'`, el campo `reporteActivo` lleva la recompensa y la fecha de pérdida. Si no hay reporte abierto, vale `null`.
+
+**Response — mascota extraviada con recompensa:**
+
+```json
+{
+  "nombre": "Firulais",
+  "estado": "extraviada",
+  "estaExtraviada": true,
+  "reporteActivo": {
+    "recompensa": 0,
+    "fechaPerdida": "2026-05-19T12:33:42.562Z"
+  }
+}
+```
+
+**Response — mascota en casa:**
+
+```json
+{
+  "nombre": "sagy",
+  "estado": "en_casa",
+  "estaExtraviada": false,
+  "reporteActivo": null
+}
+```
+
+**Estado:** ✅ OK
+
+**Notas:**
+
+- `recompensa: 0` significa que el dueño no ofreció recompensa económica — el campo sigue siendo útil para mostrar el banner de "mascota extraviada" con fecha.
+- Solo se expone el reporte más reciente con estado `abierto`. Si hay varios históricos cerrados, no aparecen aquí (para eso está `GET /pets/{id}/reports`).
+
+---
+
+## S3-2 — Filtrar mapa por tipo de mascota
+
+**Endpoints afectados:** `GET /map/public/lost-pets` y `GET /map/snapshot`
+
+**Cambio:** ambos endpoints aceptan el query param opcional `?tipoId=N`. Sin el param devuelven todas las especies. Con el param filtran por `tipos_mascota.tipo_id`.
+
+**Flujo recomendado en la app:**
+
+```
+GET /tipos-mascota → retorna todos los tipos disponibles (dinámico, sin hardcodear)
+→ renderiza chips: [Todos] [Perro] [Gato] [Ave] [Conejo] [...]
+→ usuario toca "Perro" → GET /map/public/lost-pets?tipoId=1
+```
+
+**Casos probados:**
+
+| Llamada | Resultado |
+|---|---|
+| `GET /map/public/lost-pets` | ✅ Firulais (Perro) + Lobo (Perro) |
+| `GET /map/public/lost-pets?tipoId=1` | ✅ Solo perros — mismo resultado |
+| `GET /map/public/lost-pets?tipoId=2` | ✅ `[]` — no hay gatos extraviados en BD |
+| `GET /map/public/lost-pets?tipoId=99` | ✅ `[]` — tipo inexistente devuelve vacío |
+
+**Estado:** ✅ OK
+
+**Notas:**
+
+- Tipos disponibles en la BD: Perro, Gato, Ave, Conejo, Reptil, Pez, Hámster, Cobayo, Hurón, Otro (10 tipos).
+- El filtro usa `AND (${tipoId}::int IS NULL OR m.tipo_id = ${tipoId}::int)` — un solo query cubre ambos casos sin duplicar SQL.
+- `GET /map/snapshot` acepta el mismo param para filtrar la sección `desaparecidas` del snapshot del usuario autenticado.
+
+---
+
+## S3-3 — QR en alta resolución para impresión
+
+**Endpoint afectado:** `GET /pets/{id}/qr`
+
+**Cambio:** nuevo query param opcional `?size=N` (entero). Default 300px. Rango válido 100–1000px — valores fuera del rango se clampean automáticamente.
+
+**Casos probados:**
+
+| Llamada | Bytes respuesta | Uso sugerido |
+|---|---|---|
+| `GET /pets/{id}/qr` | 3,602 bytes | Pantalla — resolución estándar |
+| `GET /pets/{id}/qr?size=600` | 5,990 bytes | Impresión mediana |
+| `GET /pets/{id}/qr?size=1000` | 10,198 bytes | Impresión en collar o tarjeta |
+| `GET /pets/{id}/qr?size=9999` | 10,198 bytes | Clampea a 1000 — mismo resultado |
+
+**Estado:** ✅ OK
+
+**Notas:**
+
+- La respuesta es siempre una data URL: `"data:image/png;base64,iVBORw0K..."` — lista para mostrar como `<img src>` en Kotlin o descargar como PNG.
+- Para impresión física en collar se recomienda `?size=800` o `?size=1000`.
+- El clamp `Math.min(Math.max(size, 100), 1000)` evita que un cliente malicioso pida imágenes enormes y consuma memoria.
+
+---
+
+## S3-4 — Actualización de mascota en tiempo real (WebSocket)
+
+**Endpoint afectado:** `PUT /pets/{id}`
+
+**Cambio:** después de guardar en BD, `update()` emite el evento `pet:profile-updated` al room `pet:{mascotaId}` via WebSocket. Todos los dispositivos conectados al room reciben los campos actualizados sin necesidad de refrescar.
+
+**Payload del evento WebSocket:**
+
+```json
+{
+  "event": "pet:profile-updated",
+  "data": {
+    "mascotaId": "bf759b6e-ec45-49ea-87b0-0efebe8fc4bd",
+    "nombre": "sagy",
+    "colorPrimario": "Blanco y naranja",
+    "rasgosParticulares": "Manchas cafe",
+    "fechaActualizacion": "2026-05-21T..."
+  }
+}
+```
+
+**Prueba HTTP:**
+
+```http
+PUT /pets/bf759b6e-ec45-49ea-87b0-0efebe8fc4bd
+Authorization: Bearer {JWT}
+Content-Type: application/json
+
+{ "colorPrimario": "Blanco y naranja" }
+```
+
+**Response — 200 OK:**
+
+```json
+{
+  "mascotaId": "bf759b6e-ec45-49ea-87b0-0efebe8fc4bd",
+  "nombre": "sagy",
+  "colorPrimario": "Blanco y naranja",
+  "rasgosParticulares": "Manchas cafe",
+  "estado": "en_casa"
+}
+```
+
+**Estado:** ✅ OK
+
+**Notas:**
+
+- El evento WS solo se emite si hay clientes conectados al room — si nadie está conectado, la llamada HTTP responde igual de rápido (el `emit` es fire-and-forget).
+- Patrón idéntico a `pet:location-updated` y `pet:status-changed` ya existentes.
+- El equipo Kotlin puede escuchar `pet:profile-updated` para actualizar la UI sin polling.
+
+---
+
+## S3-5 — Módulo Sightings (Avistamientos y Agradecimientos)
+
+Nuevo módulo `SightingsModule` con 4 endpoints: 2 públicos y 2 protegidos con JWT.
+
+**Usuario de prueba para las pruebas:** `wilian@gmail.com` / `hola12345`
+
+---
+
+### S3-5-1 — `POST /sightings/pets/:petId` — Reportar avistamiento
+
+**Endpoint público — no requiere JWT.**
+
+**Request (sin foto):**
+
+```http
+POST /sightings/pets/bf759b6e-ec45-49ea-87b0-0efebe8fc4bd
+Content-Type: multipart/form-data
+
+lat=-17.3940
+lng=-66.1460
+mensajeRescatista=Lo vi cerca del mercado central
+```
+
+**Response — 201 Created:**
+
+```json
+{
+  "avistamientoId": "a1b2c3d4-...",
+  "mascotaId": "bf759b6e-ec45-49ea-87b0-0efebe8fc4bd",
+  "mensajeRescatista": "Lo vi cerca del mercado central",
+  "fotoEvidenciaUrl": null,
+  "fechaAvistamiento": "2026-05-21T...",
+  "lat": -17.394,
+  "lng": -66.146
+}
+```
+
+**Estado:** ✅ OK
+
+**Notas:**
+
+- `lat` y `lng` son requeridos. `mensajeRescatista` y `foto` son opcionales.
+- La ubicación se almacena como `geometry(Point, 4326)` en PostGIS via `ST_MakePoint(lng, lat)`.
+- Si se incluye `foto` (campo multipart), se sube a Cloudinary en la carpeta `avistamientos/{mascotaId}`.
+
+---
+
+### S3-5-2 — `GET /sightings/pets/:petId` — Listar avistamientos
+
+**Requiere JWT. Solo el dueño o cuidador puede ver el historial.**
+
+**Request:**
+
+```http
+GET /sightings/pets/bf759b6e-ec45-49ea-87b0-0efebe8fc4bd
+Authorization: Bearer {JWT}
+```
+
+**Response — 200 OK:**
+
+```json
+[
+  {
+    "avistamientoId": "a1b2c3d4-...",
+    "mascotaId": "bf759b6e-ec45-49ea-87b0-0efebe8fc4bd",
+    "mensajeRescatista": "Lo vi cerca del mercado central",
+    "fotoEvidenciaUrl": null,
+    "fechaAvistamiento": "2026-05-21T...",
+    "lat": -17.394,
+    "lng": -66.146
+  }
+]
+```
+
+**Estado:** ✅ OK
+
+**Notas:**
+
+- Ordenado del más reciente al más antiguo (`ORDER BY fecha_avistamiento DESC`).
+- Si el `personaId` del JWT no es propietario de la mascota → `403 Forbidden`.
+
+---
+
+### S3-5-3 — `POST /sightings/:id/thanks` — Agradecer al rescatista
+
+**Requiere JWT. Solo el dueño de la mascota puede agradecer.**
+
+**Request:**
+
+```http
+POST /sightings/{avistamientoId}/thanks
+Authorization: Bearer {JWT}
+Content-Type: application/json
+
+{ "mensaje": "¡Muchas gracias por avisar! Ya lo encontramos gracias a ti." }
+```
+
+**Response — 201 Created:**
+
+```json
+{
+  "agradecimientoId": "x1y2z3...",
+  "avistamientoId": "a1b2c3d4-...",
+  "autorUsuarioId": "...",
+  "mensaje": "¡Muchas gracias por avisar! Ya lo encontramos gracias a ti.",
+  "creadoEl": "2026-05-21T..."
+}
+```
+
+**Estado:** ✅ OK
+
+**Notas:**
+
+- Si el usuario no es propietario de la mascota del avistamiento → `403 Forbidden`.
+- Si el `avistamientoId` no existe → `404 Not Found`.
+
+---
+
+### S3-5-4 — `GET /sightings/:id/thanks` — Ver agradecimientos
+
+**Endpoint público — no requiere JWT.**
+
+**Request:**
+
+```http
+GET /sightings/{avistamientoId}/thanks
+```
+
+**Response — 200 OK:**
+
+```json
+[
+  {
+    "agradecimientoId": "x1y2z3...",
+    "avistamientoId": "a1b2c3d4-...",
+    "mensaje": "¡Muchas gracias por avisar!",
+    "creadoEl": "2026-05-21T...",
+    "autor": {
+      "usuarioId": "...",
+      "persona": {
+        "nombre": "Wilian",
+        "apellidoPaterno": "Almendras",
+        "fotoPerfilUrl": "https://res.cloudinary.com/..."
+      }
+    }
+  }
+]
+```
+
+**Estado:** ✅ OK
+
+**Notas:**
+
+- **Seguridad:** se usa `select` anidado (no `include`) — `claveHash`, `tokenFcm`, `refreshTokenHash`, `correoElectronico` nunca aparecen en la respuesta.
+- Ordenado por `creadoEl ASC`.
+
+---
+
+## S3-6 — Contactos de emergencia (Etapa 3)
+
+**Migración:** `20260522024621_add_emergency_contact` — agrega columna `es_emergencia BOOLEAN DEFAULT false` a `medios_contacto`.
+
+---
+
+### S3-6-1 — `GET /users/me/contacts` — Listar todos los contactos
+
+**Request:**
+
+```http
+GET /users/me/contacts
+Authorization: Bearer {JWT}
+```
+
+**Response — 200 OK:**
+
+```json
+[
+  {
+    "contactoId": 2,
+    "personaId": "dc0c8f82-...",
+    "tipo": "WhatsApp",
+    "valor": "69524395",
+    "esPrincipal": true,
+    "esEmergencia": false
+  }
+]
+```
+
+**Estado:** ✅ OK
+
+**Notas:**
+
+- Ordenado por `esPrincipal DESC`, `esEmergencia DESC`, `contactoId ASC`.
+- El campo `esEmergencia` aparece en todos los contactos existentes (migración lo pone en `false` por defecto).
+
+---
+
+### S3-6-2 — `GET /users/me/contacts/emergency` — Solo contactos de emergencia
+
+**Request:**
+
+```http
+GET /users/me/contacts/emergency
+Authorization: Bearer {JWT}
+```
+
+**Response — 200 OK (sin contactos de emergencia):**
+
+```json
+[]
+```
+
+**Response — 200 OK (con contactos):**
+
+```json
+[
+  {
+    "contactoId": 9,
+    "personaId": "dc0c8f82-...",
+    "tipo": "Celular",
+    "valor": "+591 71234567",
+    "esPrincipal": false,
+    "esEmergencia": true
+  }
+]
+```
+
+**Estado:** ✅ OK
+
+---
+
+### S3-6-3 — `POST /users/me/contacts` — Agregar contacto (con esEmergencia)
+
+**Request:**
+
+```http
+POST /users/me/contacts
+Authorization: Bearer {JWT}
+Content-Type: application/json
+
+{ "tipo": "Celular", "valor": "+591 71234567", "esEmergencia": true }
+```
+
+**Response — 201 Created:**
+
+```json
+{
+  "contactoId": 9,
+  "personaId": "dc0c8f82-...",
+  "tipo": "Celular",
+  "valor": "+591 71234567",
+  "esPrincipal": false,
+  "esEmergencia": true
+}
+```
+
+**Estado:** ✅ OK
+
+**Notas:**
+
+- `tipo`, `valor` requeridos. `esPrincipal` y `esEmergencia` opcionales (default `false`).
+
+---
+
+### S3-6-4 — `PUT /users/me/contacts/:id` — Actualizar contacto
+
+**Request (marcar como principal):**
+
+```http
+PUT /users/me/contacts/9
+Authorization: Bearer {JWT}
+Content-Type: application/json
+
+{ "esPrincipal": true }
+```
+
+**Response — 200 OK:**
+
+```json
+{
+  "contactoId": 9,
+  "personaId": "dc0c8f82-...",
+  "tipo": "Celular",
+  "valor": "+591 71234567",
+  "esPrincipal": true,
+  "esEmergencia": true
+}
+```
+
+**Estado:** ✅ OK
+
+**Notas:**
+
+- Patch parcial — solo se actualizan los campos enviados. Los demás permanecen intactos.
+- Contacto ajeno → `403 Forbidden`.
+- Contacto inexistente → `404 Not Found`.
+
+---
+
+### S3-6-5 — Seguridad — `PUT` con contacto ajeno
+
+**Request:**
+
+```http
+PUT /users/me/contacts/1
+Authorization: Bearer {JWT (usuario B)}
+Content-Type: application/json
+
+{ "esEmergencia": true }
+```
+
+**Response — 403 Forbidden:**
+
+```json
+{
+  "message": "No tienes permiso sobre este contacto",
+  "error": "Forbidden",
+  "statusCode": 403
+}
+```
+
+**Estado:** ✅ OK
+
+---
+
+## S3-7 — Alerta Radio (Etapa 4)
+
+**Sin endpoint nuevo** — la funcionalidad es interna: se dispara automáticamente cuando `PUT /pets/:id/status` cambia a `extraviada`.
+
+**Método nuevo:** `NotificationsService.sendRadiusAlert(mascotaId, radioMetros = 5000)`
+
+**Flujo:**
+
+1. Obtiene la última ubicación conocida (`ultima_ubicacion_conocida`) de la mascota perdida.
+2. Query PostGIS `ST_DWithin` sobre `usuarios.ultima_ubicacion_conocida` — encuentra todos los usuarios activos con `tokenFcm` dentro del radio (default 5 km).
+3. Excluye a los propietarios de la propia mascota (ya reciben `sendPetLostAlert`).
+4. Envía FCM multicast a los tokens encontrados.
+
+**Trigger en `updateStatus()`:**
+
+```typescript
+if (estado === EstadoMascota.extraviada && !reporteAbierto) {
+  void this.notifications.sendPetLostAlert(mascotaId);  // dueños
+  void this.notifications.sendZoneAlert(mascotaId);     // usuarios con zonas seguras cercanas
+  void this.notifications.sendRadiusAlert(mascotaId);   // cualquier usuario en radio 5 km
+}
+```
+
+**Payload FCM:**
+
+```json
+{
+  "notification": {
+    "title": "¡Mascota perdida cerca de ti!",
+    "body": "Firulais está extraviada en tu área. ¿Puedes ayudar a encontrarla?"
+  },
+  "data": {
+    "mascotaId": "1b0cac91-...",
+    "tipo": "alerta_radio",
+    "lat": "-17.3935",
+    "lng": "-66.1457"
+  }
+}
+```
+
+**Prueba HTTP — cambio a extraviada:**
+
+```http
+PUT /pets/1b0cac91-3932-4091-91a4-8ff502d7a223/status
+Authorization: Bearer {JWT}
+Content-Type: application/json
+
+{ "estado": "extraviada" }
+```
+
+**Response — 200 OK:**
+
+```json
+{
+  "mascotaId": "1b0cac91-3932-4091-91a4-8ff502d7a223",
+  "nombre": "Firulais",
+  "estado": "extraviada"
+}
+```
+
+**Estado:** ✅ OK
+
+**Notas:**
+
+- `sendRadiusAlert` es fire-and-forget (`void`) — no bloquea la respuesta HTTP.
+- Si la mascota no tiene `ultima_ubicacion_conocida`, el método retorna silenciosamente sin enviar nada.
+- Si no hay usuarios con FCM dentro del radio, también retorna silenciosamente.
+- Los tres métodos de notificación (`sendPetLostAlert`, `sendZoneAlert`, `sendRadiusAlert`) son complementarios — un usuario puede recibir más de uno si cumple varios criterios.
+- En entorno local sin Firebase configurado, el logger emite `warn` y continúa sin errores.
+
+---
+
+## Resumen de cobertura (actualizado Etapa 4)
+
+| Módulo        | Endpoints probados |
+|---------------|--------------------|
+| Auth          | 6                  |
+| Users         | 9                  |
+| Pets          | 24                 |
+| Geofencing    | 4                  |
+| Tipos Mascota | 5                  |
+| Map           | 3                  |
+| QR            | 2                  |
+| Sightings     | 4                  |
+| **Total**     | **57**             |
+
+### Funcionalidades sin endpoint propio
+
+| Feature | Trigger | Estado |
+| ------- | ------- | ------ |
+| Alerta Radio FCM (5 km) | `PUT /pets/:id/status → extraviada` | ✅ |
+| Alerta Zona FCM | `PUT /pets/:id/status → extraviada` | ✅ |
+| Alerta Dueños FCM | `PUT /pets/:id/status → extraviada` | ✅ |
+| WS `pet:profile-updated` | `PUT /pets/:id` | ✅ |
+| WS `pet:status-changed` | `PUT /pets/:id/status` | ✅ |
 

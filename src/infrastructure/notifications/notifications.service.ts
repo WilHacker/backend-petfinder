@@ -107,6 +107,63 @@ export class NotificationsService implements OnModuleInit {
     }
   }
 
+  async sendRadiusAlert(mascotaId: string, radioMetros = 5000) {
+    try {
+      if (!this.app) return;
+
+      const rows = await this.prisma.$queryRaw<Array<{ lat: number; lng: number; nombre: string }>>`
+        SELECT
+          ST_Y(ultima_ubicacion_conocida::geometry) AS lat,
+          ST_X(ultima_ubicacion_conocida::geometry) AS lng,
+          nombre
+        FROM mascotas
+        WHERE mascota_id = ${mascotaId}::uuid
+          AND ultima_ubicacion_conocida IS NOT NULL
+      `;
+      if (!rows.length) return;
+
+      const { lat, lng, nombre } = rows[0];
+
+      const usuarios = await this.prisma.$queryRaw<Array<{ token_fcm: string }>>`
+        SELECT DISTINCT u.token_fcm
+        FROM usuarios u
+        WHERE u.token_fcm IS NOT NULL
+          AND u.ultima_ubicacion_conocida IS NOT NULL
+          AND u.estado_cuenta = 'activa'
+          AND u.usuario_id NOT IN (
+            SELECT u2.usuario_id
+            FROM propietarios_mascota pm
+            JOIN personas p ON p.persona_id = pm.persona_id
+            JOIN usuarios u2 ON u2.persona_id = p.persona_id
+            WHERE pm.mascota_id = ${mascotaId}::uuid
+          )
+          AND ST_DWithin(
+            u.ultima_ubicacion_conocida::geography,
+            ST_SetSRID(ST_MakePoint(${lng}, ${lat}), 4326)::geography,
+            ${radioMetros}
+          )
+      `;
+
+      const tokens = usuarios.map((u) => u.token_fcm).filter(Boolean);
+      if (!tokens.length) return;
+
+      await admin.messaging().sendEachForMulticast({
+        tokens,
+        notification: {
+          title: '¡Mascota perdida cerca de ti!',
+          body: `${nombre} está extraviada en tu área. ¿Puedes ayudar a encontrarla?`,
+        },
+        data: { mascotaId, tipo: 'alerta_radio', lat: String(lat), lng: String(lng) },
+      });
+
+      this.logger.log(
+        `Alerta radio enviada a ${tokens.length} usuario(s) (radio: ${radioMetros}m) — mascota: ${mascotaId}`,
+      );
+    } catch (err) {
+      this.logger.error(`sendRadiusAlert falló (mascota ${mascotaId})`, err as Error);
+    }
+  }
+
   async sendZoneAlert(mascotaId: string) {
     try {
       if (!this.app) return;

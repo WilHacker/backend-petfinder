@@ -9,12 +9,20 @@ import {
   ParseUUIDPipe,
   Post,
   Put,
+  Query,
   UploadedFiles,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
-import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiBody,
+  ApiConsumes,
+  ApiOperation,
+  ApiQuery,
+  ApiTags,
+} from '@nestjs/swagger';
 import { memoryStorage } from 'multer';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -203,9 +211,23 @@ export class PetsController {
   }
 
   @Get(':id/qr')
-  @ApiOperation({ summary: 'Obtener imagen QR de la placa (base64)' })
-  getQr(@Param('id') mascotaId: string, @CurrentUser('personaId') personaId: string) {
-    return this.petsService.getQr(mascotaId, personaId);
+  @ApiOperation({
+    summary: 'Obtener imagen QR de la placa (base64)',
+    description:
+      'Retorna data URL PNG. Usar ?size=600 o mayor para impresión (default 300, máx 1000).',
+  })
+  @ApiQuery({
+    name: 'size',
+    required: false,
+    type: Number,
+    description: 'Tamaño en px (100–1000). Default 300.',
+  })
+  getQr(
+    @Param('id') mascotaId: string,
+    @CurrentUser('personaId') personaId: string,
+    @Query('size', new ParseIntPipe({ optional: true })) size?: number,
+  ) {
+    return this.petsService.getQr(mascotaId, personaId, size);
   }
 
   @Post(':id/owners')

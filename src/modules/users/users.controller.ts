@@ -20,6 +20,7 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UsersService } from './users.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { AddContactDto } from './dto/add-contact.dto';
+import { UpdateContactDto } from './dto/update-contact.dto';
 import { UpdateLocationDto } from './dto/update-location.dto';
 import { UpdateFcmTokenDto } from './dto/update-fcm-token.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -74,10 +75,38 @@ export class UsersController {
     return this.usersService.updateProfilePhoto(usuarioId, file);
   }
 
+  @Get('me/contacts')
+  @ApiOperation({ summary: 'Listar todos los medios de contacto del usuario' })
+  listContacts(@CurrentUser('sub') usuarioId: string) {
+    return this.usersService.listContacts(usuarioId);
+  }
+
+  @Get('me/contacts/emergency')
+  @ApiOperation({
+    summary: 'Listar contactos de emergencia',
+    description: 'Solo devuelve los contactos marcados con esEmergencia=true.',
+  })
+  listEmergencyContacts(@CurrentUser('sub') usuarioId: string) {
+    return this.usersService.listEmergencyContacts(usuarioId);
+  }
+
   @Post('me/contacts')
   @ApiOperation({ summary: 'Agregar medio de contacto' })
   addContact(@CurrentUser('sub') usuarioId: string, @Body() dto: AddContactDto) {
     return this.usersService.addContact(usuarioId, dto);
+  }
+
+  @Put('me/contacts/:id')
+  @ApiOperation({
+    summary: 'Actualizar un medio de contacto',
+    description: 'Permite cambiar el valor, marcarlo como principal o de emergencia.',
+  })
+  updateContact(
+    @CurrentUser('sub') usuarioId: string,
+    @Param('id', ParseIntPipe) contactoId: number,
+    @Body() dto: UpdateContactDto,
+  ) {
+    return this.usersService.updateContact(usuarioId, contactoId, dto);
   }
 
   @Delete('me/contacts/:id')

@@ -1,7 +1,7 @@
 import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
-import { RelacionPropietario } from '@prisma/client';
+import { EstadoMascota, RelacionPropietario } from '@prisma/client';
 import { CloudinaryService } from '../../cloudinary/cloudinary.service';
 import { RealtimeService } from '../../infrastructure/realtime/realtime.service';
 import { NotificationsService } from '../../infrastructure/notifications/notifications.service';
@@ -70,6 +70,7 @@ const mockPrisma = {
   },
   placaQr: {
     create: jest.fn(),
+    findUnique: jest.fn(),
   },
   fotoMascota: {
     create: jest.fn(),
@@ -80,6 +81,17 @@ const mockPrisma = {
   reporteExtravio: {
     findFirst: jest.fn(),
     updateMany: jest.fn(),
+  },
+  registroMedico: {
+    findMany: jest.fn(),
+    create: jest.fn(),
+    findUnique: jest.fn(),
+    update: jest.fn(),
+    delete: jest.fn(),
+  },
+  escaneoQr: {
+    create: jest.fn(),
+    findMany: jest.fn(),
   },
   usuario: {
     findUnique: jest.fn(),
@@ -107,10 +119,13 @@ const mockRealtime = {
   emitPetStatusChanged: jest.fn(),
   emitOwnerAdded: jest.fn(),
   emitPetLocationUpdated: jest.fn(),
+  emitPetProfileUpdated: jest.fn(),
 };
 
 const mockNotifications = {
   sendPetLostAlert: jest.fn().mockResolvedValue(undefined),
+  sendZoneAlert: jest.fn().mockResolvedValue(undefined),
+  sendRadiusAlert: jest.fn().mockResolvedValue(undefined),
 };
 
 describe('PetsService', () => {
@@ -312,7 +327,9 @@ describe('PetsService', () => {
 
       expect(result).toBe('data:image/png;base64,abc123');
       const QRCode = jest.requireMock('qrcode');
-      expect(QRCode.toDataURL).toHaveBeenCalledWith(`http://localhost:4200/scan/${TOKEN_ACCESO}`);
+      expect(QRCode.toDataURL).toHaveBeenCalledWith(`http://localhost:4200/scan/${TOKEN_ACCESO}`, {
+        width: 300,
+      });
     });
 
     it('lanza NotFoundException si la mascota no tiene placa QR', async () => {
@@ -592,6 +609,377 @@ describe('PetsService', () => {
 
       await expect(service.deletePhoto(MASCOTA_ID, PERSONA_ID, FOTO_ID)).rejects.toThrow(
         ForbiddenException,
+      );
+    });
+  });
+
+  // ───────────────────────── updateStatus ──────────────────────
+
+  describe('updateStatus', () => {
+    beforeEach(() => {
+      mockPrisma.mascota.findUnique.mockResolvedValue(mockMascota);
+      mockPrisma.mascota.update.mockResolvedValue({
+        mascotaId: MASCOTA_ID,
+        nombre: 'Firulais',
+        estado: 'extraviada',
+      });
+    });
+
+    it('actualiza el estado de la mascota', async () => {
+      mockPrisma.reporteExtravio.findFirst.mockResolvedValue({ reporteId: 1 }); // ya hay reporte abierto
+
+      const result = await service.updateStatus(MASCOTA_ID, PERSONA_ID, 'extraviada');
+
+      expect(mockPrisma.mascota.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { estado: 'extraviada' } }),
+      );
+      expect(result.estado).toBe('extraviada');
+    });
+
+    it('crea reporte de extravío y envía las 3 alertas si no hay reporte abierto', async () => {
+      mockPrisma.reporteExtravio.findFirst.mockResolvedValue(null); // sin reporte previo
+
+      await service.updateStatus(MASCOTA_ID, PERSONA_ID, 'extraviada');
+
+      expect(mockPrisma.$executeRaw).toHaveBeenCalledTimes(1);
+      expect(mockNotifications.sendPetLostAlert).toHaveBeenCalledWith(MASCOTA_ID);
+      expect(mockNotifications.sendZoneAlert).toHaveBeenCalledWith(MASCOTA_ID);
+      expect(mockNotifications.sendRadiusAlert).toHaveBeenCalledWith(MASCOTA_ID);
+    });
+
+    it('no crea reporte duplicado si ya hay uno abierto', async () => {
+      mockPrisma.reporteExtravio.findFirst.mockResolvedValue({ reporteId: 5 });
+
+      await service.updateStatus(MASCOTA_ID, PERSONA_ID, 'extraviada');
+
+      expect(mockPrisma.$executeRaw).not.toHaveBeenCalled();
+      expect(mockNotifications.sendPetLostAlert).not.toHaveBeenCalled();
+    });
+
+    it('cierra reportes abiertos cuando el estado no es extraviada', async () => {
+      mockPrisma.mascota.update.mockResolvedValue({
+        mascotaId: MASCOTA_ID,
+        nombre: 'Firulais',
+        estado: 'en_casa',
+      });
+      mockPrisma.reporteExtravio.updateMany.mockResolvedValue({ count: 1 });
+
+      await service.updateStatus(MASCOTA_ID, PERSONA_ID, 'en_casa');
+
+      expect(mockPrisma.reporteExtravio.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { mascotaId: MASCOTA_ID, estadoReporte: 'abierto' },
+          data: { estadoReporte: 'cerrado' },
+        }),
+      );
+    });
+
+    it('lanza NotFoundException si la mascota no existe', async () => {
+      mockPrisma.mascota.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.updateStatus('no-existe', PERSONA_ID, EstadoMascota.en_casa),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('lanza ForbiddenException si el usuario no es propietario', async () => {
+      mockPrisma.mascota.findUnique.mockResolvedValue({
+        ...mockMascota,
+        propietarios: [{ personaId: 'otro-uuid' }],
+      });
+
+      await expect(
+        service.updateStatus(MASCOTA_ID, PERSONA_ID, EstadoMascota.extraviada),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('emite pet:status-changed vía WebSocket', async () => {
+      mockPrisma.reporteExtravio.findFirst.mockResolvedValue({ reporteId: 1 });
+
+      await service.updateStatus(MASCOTA_ID, PERSONA_ID, 'extraviada');
+
+      expect(mockRealtime.emitPetStatusChanged).toHaveBeenCalledWith(
+        expect.objectContaining({ mascotaId: MASCOTA_ID, estado: 'extraviada' }),
+      );
+    });
+  });
+
+  // ───────────────────────── findPetCard ───────────────────────
+
+  describe('findPetCard', () => {
+    const mockMascotaCard = {
+      mascotaId: MASCOTA_ID,
+      nombre: 'Firulais',
+      sexo: 'M',
+      colorPrimario: 'Café',
+      rasgosParticulares: null,
+      estado: 'en_casa',
+      tipoMascota: null,
+      fotos: [],
+      fichaMedica: null,
+      registrosMedicos: [],
+      propietarios: [
+        {
+          tipoRelacion: 'Dueno_Principal',
+          mostrarEnQr: true,
+          persona: {
+            personaId: PERSONA_ID,
+            nombre: 'Juan',
+            apellidoPaterno: 'Pérez',
+            fotoPerfilUrl: null,
+            mediosContacto: [],
+          },
+        },
+      ],
+      reportesExtravio: [],
+    };
+
+    it('retorna la tarjeta pública de la mascota', async () => {
+      mockPrisma.mascota.findUnique.mockResolvedValue(mockMascotaCard);
+
+      const result = await service.findPetCard(MASCOTA_ID);
+
+      expect(result.mascotaId).toBe(MASCOTA_ID);
+      expect(result.nombre).toBe('Firulais');
+      expect(result.estaExtraviada).toBe(false);
+      expect(result.propietarios).toHaveLength(1);
+    });
+
+    it('incluye reporteActivo si hay reporte abierto', async () => {
+      mockPrisma.mascota.findUnique.mockResolvedValue({
+        ...mockMascotaCard,
+        estado: 'extraviada',
+        reportesExtravio: [{ recompensa: 500, fechaPerdida: new Date() }],
+      });
+
+      const result = await service.findPetCard(MASCOTA_ID);
+
+      expect(result.estaExtraviada).toBe(true);
+      expect(result.reporteActivo).not.toBeNull();
+    });
+
+    it('excluye propietarios con mostrarEnQr = false', async () => {
+      mockPrisma.mascota.findUnique.mockResolvedValue({
+        ...mockMascotaCard,
+        propietarios: [{ ...mockMascotaCard.propietarios[0], mostrarEnQr: false }],
+      });
+
+      const result = await service.findPetCard(MASCOTA_ID);
+
+      expect(result.propietarios).toHaveLength(0);
+    });
+
+    it('lanza NotFoundException si la mascota no existe', async () => {
+      mockPrisma.mascota.findUnique.mockResolvedValue(null);
+
+      await expect(service.findPetCard('no-existe')).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  // ───────────────────────── getPetByToken ─────────────────────
+
+  describe('getPetByToken', () => {
+    it('retorna la tarjeta de la mascota por token activo', async () => {
+      mockPrisma.placaQr.findUnique.mockResolvedValue(mockPlaca);
+      mockPrisma.mascota.findUnique.mockResolvedValue({
+        mascotaId: MASCOTA_ID,
+        nombre: 'Firulais',
+        sexo: 'M',
+        colorPrimario: 'Café',
+        rasgosParticulares: null,
+        estado: 'en_casa',
+        tipoMascota: null,
+        fotos: [],
+        fichaMedica: null,
+        registrosMedicos: [],
+        propietarios: [],
+        reportesExtravio: [],
+      });
+
+      const result = await service.getPetByToken(TOKEN_ACCESO);
+
+      expect(result.mascotaId).toBe(MASCOTA_ID);
+    });
+
+    it('lanza NotFoundException si el token no existe', async () => {
+      mockPrisma.placaQr.findUnique.mockResolvedValue(null);
+
+      await expect(service.getPetByToken('token-invalido')).rejects.toThrow(NotFoundException);
+    });
+
+    it('lanza NotFoundException si la placa está desactivada', async () => {
+      mockPrisma.placaQr.findUnique.mockResolvedValue({ ...mockPlaca, estaActiva: false });
+
+      await expect(service.getPetByToken(TOKEN_ACCESO)).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  // ───────────────────────── registerScan ──────────────────────
+
+  describe('registerScan', () => {
+    const mockEscaneo = {
+      escaneoId: 'scan-uuid',
+      mascotaId: MASCOTA_ID,
+      lat: -17.78,
+      lng: -63.18,
+      escaneadoEl: new Date(),
+    };
+
+    it('registra el escaneo con coordenadas', async () => {
+      mockPrisma.placaQr.findUnique.mockResolvedValue(mockPlaca);
+      mockPrisma.escaneoQr.create.mockResolvedValue(mockEscaneo);
+
+      const result = await service.registerScan(TOKEN_ACCESO, { lat: -17.78, lng: -63.18 });
+
+      expect(result.escaneoId).toBe('scan-uuid');
+      expect(mockPrisma.escaneoQr.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ mascotaId: MASCOTA_ID, lat: -17.78, lng: -63.18 }),
+        }),
+      );
+    });
+
+    it('registra el escaneo sin coordenadas cuando no se proveen', async () => {
+      mockPrisma.placaQr.findUnique.mockResolvedValue(mockPlaca);
+      mockPrisma.escaneoQr.create.mockResolvedValue({ ...mockEscaneo, lat: null, lng: null });
+
+      await service.registerScan(TOKEN_ACCESO, {});
+
+      expect(mockPrisma.escaneoQr.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ lat: null, lng: null }),
+        }),
+      );
+    });
+
+    it('lanza NotFoundException si el token no existe', async () => {
+      mockPrisma.placaQr.findUnique.mockResolvedValue(null);
+
+      await expect(service.registerScan('token-invalido', {})).rejects.toThrow(NotFoundException);
+    });
+
+    it('lanza NotFoundException si la placa está desactivada', async () => {
+      mockPrisma.placaQr.findUnique.mockResolvedValue({ ...mockPlaca, estaActiva: false });
+
+      await expect(service.registerScan(TOKEN_ACCESO, {})).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  // ───────────────────────── getScans ──────────────────────────
+
+  describe('getScans', () => {
+    it('retorna el historial de escaneos de la mascota', async () => {
+      mockPrisma.mascota.findUnique.mockResolvedValue(mockMascota);
+      mockPrisma.escaneoQr.findMany.mockResolvedValue([{ escaneoId: 'scan-1' }]);
+
+      const result = await service.getScans(MASCOTA_ID, PERSONA_ID);
+
+      expect(result).toHaveLength(1);
+    });
+
+    it('lanza ForbiddenException si el usuario no es propietario', async () => {
+      mockPrisma.mascota.findUnique.mockResolvedValue({
+        ...mockMascota,
+        propietarios: [{ personaId: 'otro-uuid' }],
+      });
+
+      await expect(service.getScans(MASCOTA_ID, PERSONA_ID)).rejects.toThrow(ForbiddenException);
+    });
+  });
+
+  // ───────────────────────── getMedicalRecords ─────────────────
+
+  describe('getMedicalRecords', () => {
+    it('retorna registros médicos ordenados de la mascota', async () => {
+      mockPrisma.mascota.findUnique.mockResolvedValue(mockMascota);
+      mockPrisma.registroMedico.findMany.mockResolvedValue([{ registroId: 1, tipo: 'Vacuna' }]);
+
+      const result = await service.getMedicalRecords(MASCOTA_ID, PERSONA_ID);
+
+      expect(result).toHaveLength(1);
+      expect(result[0].tipo).toBe('Vacuna');
+    });
+
+    it('lanza ForbiddenException si el usuario no es propietario', async () => {
+      mockPrisma.mascota.findUnique.mockResolvedValue({
+        ...mockMascota,
+        propietarios: [{ personaId: 'otro-uuid' }],
+      });
+
+      await expect(service.getMedicalRecords(MASCOTA_ID, PERSONA_ID)).rejects.toThrow(
+        ForbiddenException,
+      );
+    });
+  });
+
+  // ───────────────────────── addMedicalRecord ──────────────────
+
+  describe('addMedicalRecord', () => {
+    it('crea un nuevo registro médico', async () => {
+      mockPrisma.mascota.findUnique.mockResolvedValue(mockMascota);
+      mockPrisma.registroMedico.create.mockResolvedValue({
+        registroId: 1,
+        tipo: 'Vacuna',
+        descripcion: 'Antirrábica',
+        fecha: new Date('2026-05-01'),
+        veterinario: 'Dr. Pérez',
+      });
+
+      const result = await service.addMedicalRecord(MASCOTA_ID, PERSONA_ID, {
+        tipo: 'Vacuna',
+        descripcion: 'Antirrábica',
+        fecha: '2026-05-01',
+        veterinario: 'Dr. Pérez',
+      });
+
+      expect(result.tipo).toBe('Vacuna');
+      expect(mockPrisma.registroMedico.create).toHaveBeenCalledTimes(1);
+    });
+
+    it('lanza NotFoundException si la mascota no existe', async () => {
+      mockPrisma.mascota.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.addMedicalRecord('no-existe', PERSONA_ID, { tipo: 'Vacuna', descripcion: 'x' }),
+      ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  // ───────────────────────── updateMedicalRecord ───────────────
+
+  describe('updateMedicalRecord', () => {
+    const mockRegistro = { registroId: 1, mascotaId: MASCOTA_ID, tipo: 'Vacuna' };
+
+    it('actualiza el registro médico', async () => {
+      mockPrisma.mascota.findUnique.mockResolvedValue(mockMascota);
+      mockPrisma.registroMedico.findUnique.mockResolvedValue(mockRegistro);
+      mockPrisma.registroMedico.update.mockResolvedValue({ ...mockRegistro, tipo: 'Consulta' });
+
+      const result = await service.updateMedicalRecord(MASCOTA_ID, PERSONA_ID, 1, {
+        tipo: 'Consulta',
+      });
+
+      expect(result.tipo).toBe('Consulta');
+    });
+
+    it('lanza NotFoundException si el registro no pertenece a la mascota', async () => {
+      mockPrisma.mascota.findUnique.mockResolvedValue(mockMascota);
+      mockPrisma.registroMedico.findUnique.mockResolvedValue({
+        ...mockRegistro,
+        mascotaId: 'otra-mascota',
+      });
+
+      await expect(service.updateMedicalRecord(MASCOTA_ID, PERSONA_ID, 1, {})).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('lanza NotFoundException si el registro no existe', async () => {
+      mockPrisma.mascota.findUnique.mockResolvedValue(mockMascota);
+      mockPrisma.registroMedico.findUnique.mockResolvedValue(null);
+
+      await expect(service.updateMedicalRecord(MASCOTA_ID, PERSONA_ID, 99, {})).rejects.toThrow(
+        NotFoundException,
       );
     });
   });

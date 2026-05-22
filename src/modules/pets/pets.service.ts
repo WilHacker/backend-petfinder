@@ -171,7 +171,7 @@ export class PetsService {
     if (!mascota) throw new NotFoundException('Mascota no encontrada');
     this.checkOwnership(mascota, personaId);
 
-    return this.prisma.mascota.update({
+    const updated = await this.prisma.mascota.update({
       where: { mascotaId },
       data: {
         ...(dto.nombre && { nombre: dto.nombre }),
@@ -183,6 +183,16 @@ export class PetsService {
         }),
       },
     });
+
+    this.realtime.emitPetProfileUpdated({
+      mascotaId,
+      nombre: updated.nombre ?? undefined,
+      colorPrimario: updated.colorPrimario ?? undefined,
+      rasgosParticulares: updated.rasgosParticulares ?? undefined,
+      fechaActualizacion: new Date(),
+    });
+
+    return updated;
   }
 
   async remove(mascotaId: string, personaId: string) {
@@ -197,7 +207,7 @@ export class PetsService {
     return { message: 'Mascota eliminada' };
   }
 
-  async getQr(mascotaId: string, personaId: string): Promise<string> {
+  async getQr(mascotaId: string, personaId: string, size = 300): Promise<string> {
     const mascota = await this.prisma.mascota.findUnique({
       where: { mascotaId },
       include: { propietarios: true, placaQr: true },
@@ -208,7 +218,8 @@ export class PetsService {
 
     const frontendUrl = this.config.get<string>('FRONTEND_URL', 'https://petfinder.app');
     const url = `${frontendUrl}/scan/${mascota.placaQr.tokenAcceso}`;
-    return QRCode.toDataURL(url);
+    const clampedSize = Math.min(Math.max(size, 100), 1000);
+    return QRCode.toDataURL(url, { width: clampedSize });
   }
 
   async addOwner(mascotaId: string, personaId: string, dto: AddOwnerDto) {
@@ -311,9 +322,10 @@ export class PetsService {
           WHERE mascota_id = ${mascotaId}::uuid
         `;
 
-        // Notificar a propietarios y a usuarios cercanos en sus zonas seguras
+        // Notificar a propietarios, usuarios con zonas cercanas y usuarios en el radio
         void this.notifications.sendPetLostAlert(mascotaId);
         void this.notifications.sendZoneAlert(mascotaId);
+        void this.notifications.sendRadiusAlert(mascotaId);
       }
     } else {
       // Cierra cualquier reporte abierto al recuperar o cambiar estado
@@ -411,9 +423,17 @@ export class PetsService {
             },
           },
         },
+        reportesExtravio: {
+          where: { estadoReporte: 'abierto' },
+          select: { recompensa: true, fechaPerdida: true },
+          orderBy: { reporteId: 'desc' },
+          take: 1,
+        },
       },
     });
     if (!mascota) throw new NotFoundException('Mascota no encontrada');
+
+    const reporteActivo = mascota.reportesExtravio[0] ?? null;
 
     return {
       mascotaId: mascota.mascotaId,
@@ -424,6 +444,12 @@ export class PetsService {
       rasgosParticulares: mascota.rasgosParticulares,
       estado: mascota.estado,
       estaExtraviada: mascota.estado === EstadoMascota.extraviada,
+      reporteActivo: reporteActivo
+        ? {
+            recompensa: Number(reporteActivo.recompensa) || 0,
+            fechaPerdida: reporteActivo.fechaPerdida,
+          }
+        : null,
       fotos: mascota.fotos.map((f) => ({
         fotoId: f.fotoId,
         url: f.fotoUrl,

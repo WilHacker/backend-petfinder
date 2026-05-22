@@ -30,6 +30,7 @@ const mockUsuario = {
 const mockPrisma = {
   usuario: {
     findUnique: jest.fn(),
+    findMany: jest.fn(),
     create: jest.fn(),
     update: jest.fn(),
   },
@@ -170,6 +171,56 @@ describe('AuthService', () => {
           data: expect.objectContaining({ ultimoAcceso: expect.any(Date) }),
         }),
       );
+    });
+  });
+
+  // ───────────────────────── refresh ──────────────────────────
+
+  describe('refresh', () => {
+    it('devuelve nuevos tokens cuando el refresh token es válido', async () => {
+      mockPrisma.usuario.findMany.mockResolvedValue([
+        { usuarioId: 'usuario-uuid', personaId: 'persona-uuid', refreshTokenHash: 'hashed_rt' },
+      ]);
+      (bcrypt.compare as jest.Mock).mockResolvedValue(true);
+      mockPrisma.usuario.findUnique.mockResolvedValue({ rol: 'usuario' });
+      mockPrisma.usuario.update.mockResolvedValue({});
+
+      const result = await service.refresh('refresh-token-uuid');
+
+      expect(result.accessToken).toBe('jwt_token');
+      expect(result.refreshToken).toBeDefined();
+      expect(mockJwtService.sign).toHaveBeenCalledTimes(1);
+    });
+
+    it('lanza UnauthorizedException si ningún hash coincide', async () => {
+      mockPrisma.usuario.findMany.mockResolvedValue([
+        { usuarioId: 'usuario-uuid', personaId: 'persona-uuid', refreshTokenHash: 'hashed_rt' },
+      ]);
+      (bcrypt.compare as jest.Mock).mockResolvedValue(false);
+
+      await expect(service.refresh('token-invalido')).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('lanza UnauthorizedException si no hay usuarios con refreshTokenHash', async () => {
+      mockPrisma.usuario.findMany.mockResolvedValue([]);
+
+      await expect(service.refresh('cualquier-token')).rejects.toThrow(UnauthorizedException);
+    });
+  });
+
+  // ───────────────────────── logout ────────────────────────────
+
+  describe('logout', () => {
+    it('limpia el refreshTokenHash del usuario', async () => {
+      mockPrisma.usuario.update.mockResolvedValue({});
+
+      const result = await service.logout('usuario-uuid');
+
+      expect(mockPrisma.usuario.update).toHaveBeenCalledWith({
+        where: { usuarioId: 'usuario-uuid' },
+        data: { refreshTokenHash: null },
+      });
+      expect(result).toEqual({ message: 'Sesión cerrada correctamente' });
     });
   });
 

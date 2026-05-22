@@ -5,10 +5,14 @@ import { PetsService } from './pets.service';
 import { AddOwnerDto } from './dto/add-owner.dto';
 import { CreatePetDto } from './dto/create-pet.dto';
 import { UpdatePetDto } from './dto/update-pet.dto';
+import { CreateMedicalRecordDto } from './dto/create-medical-record.dto';
+import { UpdateMedicalRecordDto } from './dto/update-medical-record.dto';
 
 const PERSONA_ID = 'persona-uuid';
 const MASCOTA_ID = 'mascota-uuid';
 const FOTO_ID = 1;
+const TOKEN_ACCESO = 'token-uuid';
+const REGISTRO_ID = 1;
 
 const mockPetsService = {
   create: jest.fn(),
@@ -19,9 +23,19 @@ const mockPetsService = {
   getQr: jest.fn(),
   addOwner: jest.fn(),
   removeOwner: jest.fn(),
+  updateStatus: jest.fn(),
   findPetsOnMap: jest.fn(),
   uploadPhotos: jest.fn(),
   deletePhoto: jest.fn(),
+  findPetCard: jest.fn(),
+  getPetByToken: jest.fn(),
+  registerScan: jest.fn(),
+  getScans: jest.fn(),
+  getReports: jest.fn(),
+  getMedicalRecords: jest.fn(),
+  addMedicalRecord: jest.fn(),
+  updateMedicalRecord: jest.fn(),
+  removeMedicalRecord: jest.fn(),
 };
 
 const mockJwtService = { verifyAsync: jest.fn() };
@@ -110,9 +124,9 @@ describe('PetsController', () => {
   it('getQr delega a petsService.getQr y retorna base64', async () => {
     mockPetsService.getQr.mockResolvedValue('data:image/png;base64,abc');
 
-    const result = await controller.getQr(MASCOTA_ID, PERSONA_ID);
+    const result = await controller.getQr(MASCOTA_ID, PERSONA_ID, undefined);
 
-    expect(mockPetsService.getQr).toHaveBeenCalledWith(MASCOTA_ID, PERSONA_ID);
+    expect(mockPetsService.getQr).toHaveBeenCalledWith(MASCOTA_ID, PERSONA_ID, undefined);
     expect(result).toBe('data:image/png;base64,abc');
   });
 
@@ -195,6 +209,160 @@ describe('PetsController', () => {
 
       expect(mockPetsService.deletePhoto).toHaveBeenCalledWith(MASCOTA_ID, PERSONA_ID, FOTO_ID);
       expect(result).toEqual({ message: 'Foto eliminada' });
+    });
+  });
+
+  // ───────────────────────── updateStatus ──────────────────────
+
+  describe('updateStatus', () => {
+    it('delega a petsService.updateStatus con mascotaId, personaId y estado', async () => {
+      mockPetsService.updateStatus.mockResolvedValue({
+        mascotaId: MASCOTA_ID,
+        estado: 'extraviada',
+      });
+
+      const result = await controller.updateStatus(MASCOTA_ID, PERSONA_ID, {
+        estado: 'extraviada',
+      });
+
+      expect(mockPetsService.updateStatus).toHaveBeenCalledWith(
+        MASCOTA_ID,
+        PERSONA_ID,
+        'extraviada',
+      );
+      expect(result.estado).toBe('extraviada');
+    });
+  });
+
+  // ───────────────────────── getPetCard ────────────────────────
+
+  describe('getPetCard', () => {
+    it('delega a petsService.findPetCard con mascotaId', async () => {
+      const card = { mascotaId: MASCOTA_ID, nombre: 'Firulais', propietarios: [] };
+      mockPetsService.findPetCard.mockResolvedValue(card);
+
+      const result = await controller.getPetCard(MASCOTA_ID);
+
+      expect(mockPetsService.findPetCard).toHaveBeenCalledWith(MASCOTA_ID);
+      expect(result).toEqual(card);
+    });
+  });
+
+  // ───────────────────────── getPetByToken ─────────────────────
+
+  describe('getPetByToken', () => {
+    it('delega a petsService.getPetByToken con el token', async () => {
+      const card = { mascotaId: MASCOTA_ID, nombre: 'Firulais' };
+      mockPetsService.getPetByToken.mockResolvedValue(card);
+
+      const result = await controller.getPetByToken(TOKEN_ACCESO);
+
+      expect(mockPetsService.getPetByToken).toHaveBeenCalledWith(TOKEN_ACCESO);
+      expect(result).toEqual(card);
+    });
+  });
+
+  // ───────────────────────── registerScan ──────────────────────
+
+  describe('registerScan', () => {
+    it('delega a petsService.registerScan con token y dto', async () => {
+      const escaneo = { escaneoId: 'scan-uuid', mascotaId: MASCOTA_ID };
+      mockPetsService.registerScan.mockResolvedValue(escaneo);
+
+      const result = await controller.registerScan(TOKEN_ACCESO, { lat: -17.78, lng: -63.18 });
+
+      expect(mockPetsService.registerScan).toHaveBeenCalledWith(TOKEN_ACCESO, {
+        lat: -17.78,
+        lng: -63.18,
+      });
+      expect(result).toEqual(escaneo);
+    });
+  });
+
+  // ───────────────────────── getScans ──────────────────────────
+
+  describe('getScans', () => {
+    it('delega a petsService.getScans con mascotaId y personaId', async () => {
+      mockPetsService.getScans.mockResolvedValue([{ escaneoId: 'scan-1' }]);
+
+      const result = await controller.getScans(MASCOTA_ID, PERSONA_ID);
+
+      expect(mockPetsService.getScans).toHaveBeenCalledWith(MASCOTA_ID, PERSONA_ID);
+      expect(result).toHaveLength(1);
+    });
+  });
+
+  // ───────────────────────── getReports ────────────────────────
+
+  describe('getReports', () => {
+    it('delega a petsService.getReports con mascotaId y personaId', async () => {
+      mockPetsService.getReports.mockResolvedValue([{ reporte_id: 1 }]);
+
+      const result = await controller.getReports(MASCOTA_ID, PERSONA_ID);
+
+      expect(mockPetsService.getReports).toHaveBeenCalledWith(MASCOTA_ID, PERSONA_ID);
+      expect(result).toHaveLength(1);
+    });
+  });
+
+  // ─────────────────────── getMedicalRecords ───────────────────
+
+  describe('getMedicalRecords', () => {
+    it('delega a petsService.getMedicalRecords', async () => {
+      mockPetsService.getMedicalRecords.mockResolvedValue([{ registroId: 1, tipo: 'Vacuna' }]);
+
+      const result = await controller.getMedicalRecords(MASCOTA_ID, PERSONA_ID);
+
+      expect(mockPetsService.getMedicalRecords).toHaveBeenCalledWith(MASCOTA_ID, PERSONA_ID);
+      expect(result).toHaveLength(1);
+    });
+  });
+
+  // ─────────────────────── addMedicalRecord ────────────────────
+
+  describe('addMedicalRecord', () => {
+    it('delega a petsService.addMedicalRecord con dto', async () => {
+      const dto: CreateMedicalRecordDto = { tipo: 'Vacuna', descripcion: 'Antirrábica' };
+      mockPetsService.addMedicalRecord.mockResolvedValue({ registroId: 1 });
+
+      await controller.addMedicalRecord(MASCOTA_ID, PERSONA_ID, dto);
+
+      expect(mockPetsService.addMedicalRecord).toHaveBeenCalledWith(MASCOTA_ID, PERSONA_ID, dto);
+    });
+  });
+
+  // ─────────────────────── updateMedicalRecord ─────────────────
+
+  describe('updateMedicalRecord', () => {
+    it('delega a petsService.updateMedicalRecord con registroId numérico', async () => {
+      const dto: UpdateMedicalRecordDto = { descripcion: 'Actualizada' };
+      mockPetsService.updateMedicalRecord.mockResolvedValue({ registroId: REGISTRO_ID });
+
+      await controller.updateMedicalRecord(MASCOTA_ID, REGISTRO_ID, PERSONA_ID, dto);
+
+      expect(mockPetsService.updateMedicalRecord).toHaveBeenCalledWith(
+        MASCOTA_ID,
+        PERSONA_ID,
+        REGISTRO_ID,
+        dto,
+      );
+    });
+  });
+
+  // ─────────────────────── removeMedicalRecord ─────────────────
+
+  describe('removeMedicalRecord', () => {
+    it('delega a petsService.removeMedicalRecord y retorna mensaje', async () => {
+      mockPetsService.removeMedicalRecord.mockResolvedValue({ message: 'Registro eliminado' });
+
+      const result = await controller.removeMedicalRecord(MASCOTA_ID, REGISTRO_ID, PERSONA_ID);
+
+      expect(mockPetsService.removeMedicalRecord).toHaveBeenCalledWith(
+        MASCOTA_ID,
+        PERSONA_ID,
+        REGISTRO_ID,
+      );
+      expect(result).toEqual({ message: 'Registro eliminado' });
     });
   });
 });

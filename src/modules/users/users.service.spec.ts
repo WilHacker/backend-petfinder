@@ -1,6 +1,7 @@
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { TipoContacto } from '@prisma/client';
+import { CloudinaryService } from '../../cloudinary/cloudinary.service';
 import { RealtimeService } from '../../infrastructure/realtime/realtime.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UsersService } from './users.service';
@@ -23,6 +24,11 @@ const mockPersona = {
   mediosContacto: [],
 };
 
+const mockCloudinary = {
+  uploadBuffer: jest.fn(),
+  deleteByUrl: jest.fn().mockResolvedValue(undefined),
+};
+
 const mockPrisma = {
   usuario: {
     findUnique: jest.fn(),
@@ -35,6 +41,8 @@ const mockPrisma = {
   medioContacto: {
     create: jest.fn(),
     findUnique: jest.fn(),
+    findMany: jest.fn(),
+    update: jest.fn(),
     delete: jest.fn(),
   },
   propietarioMascota: {
@@ -64,18 +72,9 @@ describe('UsersService', () => {
         UsersService,
         { provide: PrismaService, useValue: mockPrisma },
         { provide: RealtimeService, useValue: mockRealtime },
-        {
-          provide: 'CloudinaryService',
-          useValue: { uploadBuffer: jest.fn(), deleteByUrl: jest.fn() },
-        },
+        { provide: CloudinaryService, useValue: mockCloudinary },
       ],
-    })
-      .useMocker((token) => {
-        if (token?.toString().includes('CloudinaryService')) {
-          return { uploadBuffer: jest.fn(), deleteByUrl: jest.fn() };
-        }
-      })
-      .compile();
+    }).compile();
 
     service = module.get<UsersService>(UsersService);
   });
@@ -285,6 +284,252 @@ describe('UsersService', () => {
       const result = await service.findUsersOnMap({ lat: -17.78, lng: -63.18, radio: 1000 });
 
       expect(result).toEqual(mockRows);
+    });
+  });
+
+  // ───────────────────────── listContacts ──────────────────────
+
+  describe('listContacts', () => {
+    it('retorna todos los contactos del usuario ordenados', async () => {
+      const contactos = [
+        {
+          contactoId: 1,
+          tipo: 'WhatsApp',
+          valor: '+591 70000000',
+          esPrincipal: true,
+          esEmergencia: false,
+        },
+        {
+          contactoId: 2,
+          tipo: 'Email',
+          valor: 'juan@test.com',
+          esPrincipal: false,
+          esEmergencia: false,
+        },
+      ];
+      mockPrisma.usuario.findUnique.mockResolvedValue(mockUsuario);
+      mockPrisma.medioContacto.findMany.mockResolvedValue(contactos);
+
+      const result = await service.listContacts('usuario-uuid');
+
+      expect(result).toEqual(contactos);
+      expect(mockPrisma.medioContacto.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { personaId: 'persona-uuid' } }),
+      );
+    });
+
+    it('lanza NotFoundException si el usuario no existe', async () => {
+      mockPrisma.usuario.findUnique.mockResolvedValue(null);
+
+      await expect(service.listContacts('no-existe')).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  // ───────────────────────── updateContact ─────────────────────
+
+  describe('updateContact', () => {
+    const mockContacto = {
+      contactoId: 1,
+      personaId: 'persona-uuid',
+      tipo: 'WhatsApp',
+      valor: '+591 70000000',
+    };
+
+    it('actualiza el contacto correctamente', async () => {
+      mockPrisma.usuario.findUnique.mockResolvedValue(mockUsuario);
+      mockPrisma.medioContacto.findUnique.mockResolvedValue(mockContacto);
+      mockPrisma.medioContacto.update.mockResolvedValue({
+        ...mockContacto,
+        valor: '+591 71111111',
+      });
+
+      const result = await service.updateContact('usuario-uuid', 1, { valor: '+591 71111111' });
+
+      expect(result.valor).toBe('+591 71111111');
+      expect(mockPrisma.medioContacto.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { contactoId: 1 } }),
+      );
+    });
+
+    it('lanza ForbiddenException si el contacto pertenece a otro usuario', async () => {
+      mockPrisma.usuario.findUnique.mockResolvedValue(mockUsuario);
+      mockPrisma.medioContacto.findUnique.mockResolvedValue({
+        ...mockContacto,
+        personaId: 'otra-persona-uuid',
+      });
+
+      await expect(service.updateContact('usuario-uuid', 1, { valor: '+0' })).rejects.toThrow(
+        ForbiddenException,
+      );
+    });
+
+    it('lanza NotFoundException si el contacto no existe', async () => {
+      mockPrisma.usuario.findUnique.mockResolvedValue(mockUsuario);
+      mockPrisma.medioContacto.findUnique.mockResolvedValue(null);
+
+      await expect(service.updateContact('usuario-uuid', 99, {})).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+  });
+
+  // ─────────────────── listEmergencyContacts ───────────────────
+
+  describe('listEmergencyContacts', () => {
+    it('retorna solo los contactos marcados como emergencia', async () => {
+      const emergencia = [
+        { contactoId: 2, tipo: 'Celular', valor: '+591 79999999', esEmergencia: true },
+      ];
+      mockPrisma.usuario.findUnique.mockResolvedValue(mockUsuario);
+      mockPrisma.medioContacto.findMany.mockResolvedValue(emergencia);
+
+      const result = await service.listEmergencyContacts('usuario-uuid');
+
+      expect(result).toEqual(emergencia);
+      expect(mockPrisma.medioContacto.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { personaId: 'persona-uuid', esEmergencia: true },
+        }),
+      );
+    });
+
+    it('lanza NotFoundException si el usuario no existe', async () => {
+      mockPrisma.usuario.findUnique.mockResolvedValue(null);
+
+      await expect(service.listEmergencyContacts('no-existe')).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  // ───────────────────────── updateFcmToken ────────────────────
+
+  describe('updateFcmToken', () => {
+    it('actualiza el tokenFcm del usuario', async () => {
+      mockPrisma.usuario.findUnique.mockResolvedValue(mockUsuario);
+      mockPrisma.usuario.update.mockResolvedValue({});
+
+      const result = await service.updateFcmToken('usuario-uuid', { tokenFcm: 'nuevo-token' });
+
+      expect(mockPrisma.usuario.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { usuarioId: 'usuario-uuid' },
+          data: { tokenFcm: 'nuevo-token' },
+        }),
+      );
+      expect(result).toEqual({ message: 'Token FCM actualizado' });
+    });
+
+    it('lanza NotFoundException si el usuario no existe', async () => {
+      mockPrisma.usuario.findUnique.mockResolvedValue(null);
+
+      await expect(service.updateFcmToken('no-existe', { tokenFcm: 'x' })).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+  });
+
+  // ───────────────────────── findUserCard ──────────────────────
+
+  describe('findUserCard', () => {
+    const mockPersonaCard = {
+      personaId: 'persona-uuid',
+      nombre: 'Juan',
+      apellidoPaterno: 'Pérez',
+      apellidoMaterno: null,
+      fotoPerfilUrl: null,
+      mediosContacto: [{ tipo: 'WhatsApp', valor: '+591 70000000' }],
+      mascotasPropietario: [
+        {
+          mascota: {
+            mascotaId: 'mascota-uuid',
+            nombre: 'Rex',
+            tipoMascota: { nombre: 'Perro' },
+            fotos: [{ fotoUrl: 'https://cdn.example.com/rex.jpg' }],
+          },
+        },
+      ],
+    };
+
+    it('retorna la tarjeta del usuario con mascotas y contactos', async () => {
+      mockPrisma.persona.findUnique.mockResolvedValue(mockPersonaCard);
+
+      const result = await service.findUserCard('persona-uuid');
+
+      expect(result.personaId).toBe('persona-uuid');
+      expect(result.nombreCompleto).toBe('Juan Pérez');
+      expect(result.contactos).toHaveLength(1);
+      expect(result.mascotas).toHaveLength(1);
+      expect(result.mascotas[0].nombre).toBe('Rex');
+    });
+
+    it('lanza NotFoundException si la persona no existe', async () => {
+      mockPrisma.persona.findUnique.mockResolvedValue(null);
+
+      await expect(service.findUserCard('no-existe')).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  // ─────────────────────── updateProfilePhoto ──────────────────
+
+  describe('updateProfilePhoto', () => {
+    const fakeFile: Express.Multer.File = {
+      buffer: Buffer.from('img'),
+      mimetype: 'image/jpeg',
+      originalname: 'foto.jpg',
+      size: 500,
+      fieldname: 'foto',
+      encoding: '7bit',
+      stream: null as never,
+      destination: '',
+      filename: '',
+      path: '',
+    };
+
+    it('sube la nueva foto y actualiza fotoPerfilUrl', async () => {
+      mockPrisma.usuario.findUnique.mockResolvedValue({
+        ...mockUsuario,
+        persona: { fotoPerfilUrl: null },
+      });
+      mockCloudinary.uploadBuffer.mockResolvedValue({
+        secure_url: 'https://cdn.cloudinary.com/personas/persona-uuid/foto.jpg',
+      });
+      mockPrisma.persona.update.mockResolvedValue({
+        personaId: 'persona-uuid',
+        fotoPerfilUrl: 'https://cdn.cloudinary.com/personas/persona-uuid/foto.jpg',
+      });
+
+      const result = await service.updateProfilePhoto('usuario-uuid', fakeFile);
+
+      expect(mockCloudinary.uploadBuffer).toHaveBeenCalledWith(
+        fakeFile.buffer,
+        'personas/persona-uuid',
+      );
+      expect(result.fotoPerfilUrl).toContain('cloudinary.com');
+    });
+
+    it('elimina la foto anterior antes de subir la nueva', async () => {
+      mockPrisma.usuario.findUnique.mockResolvedValue({
+        ...mockUsuario,
+        persona: { fotoPerfilUrl: 'https://cdn.cloudinary.com/old.jpg' },
+      });
+      mockCloudinary.uploadBuffer.mockResolvedValue({
+        secure_url: 'https://cdn.cloudinary.com/new.jpg',
+      });
+      mockPrisma.persona.update.mockResolvedValue({
+        personaId: 'persona-uuid',
+        fotoPerfilUrl: 'https://cdn.cloudinary.com/new.jpg',
+      });
+
+      await service.updateProfilePhoto('usuario-uuid', fakeFile);
+
+      expect(mockCloudinary.deleteByUrl).toHaveBeenCalledWith('https://cdn.cloudinary.com/old.jpg');
+    });
+
+    it('lanza NotFoundException si el usuario no existe', async () => {
+      mockPrisma.usuario.findUnique.mockResolvedValue(null);
+
+      await expect(service.updateProfilePhoto('no-existe', fakeFile)).rejects.toThrow(
+        NotFoundException,
+      );
     });
   });
 });
