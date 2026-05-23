@@ -244,12 +244,13 @@ export class PetsService {
     if (!mascota) throw new NotFoundException('Mascota no encontrada');
     this.checkOwnership(mascota, personaId);
 
-    const gpsRows = await this.prisma.$queryRaw<Array<{ tiene_gps: boolean }>>`
-      SELECT ultima_ubicacion_conocida IS NOT NULL AS tiene_gps
+    const gpsRows = await this.prisma.$queryRaw<Array<{ lat: number | null }>>`
+      SELECT CASE WHEN ultima_ubicacion_conocida IS NOT NULL
+                  THEN ST_Y(ultima_ubicacion_conocida::geometry) END AS lat
       FROM mascotas
       WHERE mascota_id = ${mascotaId}::uuid
     `;
-    if (!gpsRows[0]?.tiene_gps) {
+    if (gpsRows[0]?.lat == null) {
       throw new BadRequestException(
         'La mascota no tiene ubicación GPS registrada. ' +
           'Actualiza su ubicación con PUT /pets/{id}/location antes de enviar la alerta.',

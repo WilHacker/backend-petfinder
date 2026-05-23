@@ -359,7 +359,7 @@ describe('PetsService', () => {
   describe('sendCommunityAlert', () => {
     beforeEach(() => {
       mockPrisma.mascota.findUnique.mockResolvedValue(mockMascota);
-      mockPrisma.$queryRaw.mockResolvedValue([{ tiene_gps: true }]);
+      mockPrisma.$queryRaw.mockResolvedValue([{ lat: -16.5 }]);
       mockNotifications.sendRadiusAlert.mockResolvedValue(3);
     });
 
@@ -382,7 +382,7 @@ describe('PetsService', () => {
     });
 
     it('lanza BadRequestException si la mascota no tiene GPS', async () => {
-      mockPrisma.$queryRaw.mockResolvedValue([{ tiene_gps: false }]);
+      mockPrisma.$queryRaw.mockResolvedValue([{ lat: null }]);
 
       await expect(service.sendCommunityAlert(MASCOTA_ID, PERSONA_ID, 5000)).rejects.toThrow(
         BadRequestException,
