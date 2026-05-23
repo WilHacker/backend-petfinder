@@ -82,6 +82,7 @@ const mockPrisma = {
   },
   reporteExtravio: {
     findFirst: jest.fn(),
+    update: jest.fn(),
     updateMany: jest.fn(),
   },
   registroMedico: {
@@ -795,6 +796,54 @@ describe('PetsService', () => {
 
       expect(mockRealtime.emitPetStatusChanged).toHaveBeenCalledWith(
         expect.objectContaining({ mascotaId: MASCOTA_ID, estado: 'extraviada' }),
+      );
+    });
+  });
+
+  // ───────────────────────── updateReward ──────────────────────
+
+  describe('updateReward', () => {
+    beforeEach(() => {
+      mockPrisma.mascota.findUnique.mockResolvedValue(mockMascota);
+    });
+
+    it('actualiza la recompensa cuando hay reporte abierto', async () => {
+      mockPrisma.reporteExtravio.findFirst.mockResolvedValue({ reporteId: 3 });
+      mockPrisma.reporteExtravio.update.mockResolvedValue({});
+
+      const result = await service.updateReward(MASCOTA_ID, PERSONA_ID, 200);
+
+      expect(mockPrisma.reporteExtravio.update).toHaveBeenCalledWith({
+        where: { reporteId: 3 },
+        data: { recompensa: 200 },
+      });
+      expect(result).toEqual({ mascotaId: MASCOTA_ID, recompensa: 200 });
+    });
+
+    it('lanza BadRequestException si la mascota no está extraviada', async () => {
+      mockPrisma.reporteExtravio.findFirst.mockResolvedValue(null);
+
+      await expect(service.updateReward(MASCOTA_ID, PERSONA_ID, 200)).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('lanza NotFoundException si la mascota no existe', async () => {
+      mockPrisma.mascota.findUnique.mockResolvedValue(null);
+
+      await expect(service.updateReward('no-existe', PERSONA_ID, 100)).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('lanza ForbiddenException si el usuario no es propietario', async () => {
+      mockPrisma.mascota.findUnique.mockResolvedValue({
+        ...mockMascota,
+        propietarios: [{ personaId: 'otro-persona-id' }],
+      });
+
+      await expect(service.updateReward(MASCOTA_ID, PERSONA_ID, 100)).rejects.toThrow(
+        ForbiddenException,
       );
     });
   });

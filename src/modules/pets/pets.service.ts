@@ -374,6 +374,29 @@ export class PetsService {
     return actualizada;
   }
 
+  async updateReward(mascotaId: string, personaId: string, recompensa: number) {
+    const mascota = await this.prisma.mascota.findUnique({
+      where: { mascotaId },
+      include: { propietarios: true },
+    });
+    if (!mascota) throw new NotFoundException('Mascota no encontrada');
+    this.checkOwnership(mascota, personaId);
+
+    const reporteAbierto = await this.prisma.reporteExtravio.findFirst({
+      where: { mascotaId, estadoReporte: 'abierto' },
+      select: { reporteId: true },
+    });
+    if (!reporteAbierto)
+      throw new BadRequestException('La mascota no está extraviada — no hay reporte activo');
+
+    await this.prisma.reporteExtravio.update({
+      where: { reporteId: reporteAbierto.reporteId },
+      data: { recompensa },
+    });
+
+    return { mascotaId, recompensa };
+  }
+
   async updatePetLocation(mascotaId: string, personaId: string, lat: number, lng: number) {
     const mascota = await this.prisma.mascota.findUnique({
       where: { mascotaId },

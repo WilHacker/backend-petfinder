@@ -38,6 +38,7 @@ import { CreatePetDto } from './dto/create-pet.dto';
 import { UpdatePetDto } from './dto/update-pet.dto';
 import { UpdatePetLocationDto } from './dto/update-pet-location.dto';
 import { UpdatePetStatusDto } from './dto/update-pet-status.dto';
+import { UpdateRewardDto } from './dto/update-reward.dto';
 import { PetsService } from './pets.service';
 
 @ApiTags('Pets')
@@ -119,6 +120,21 @@ export class PetsController {
   })
   getPetOwnersOnMap(@Param('id') mascotaId: string, @CurrentUser('personaId') personaId: string) {
     return this.petsService.findPetOwnersOnMap(mascotaId, personaId);
+  }
+
+  @Put(':id/report/reward')
+  @ApiOperation({
+    summary: 'Establecer o actualizar la recompensa del reporte activo',
+    description:
+      'Solo disponible cuando la mascota está extraviada (tiene un reporte abierto). ' +
+      'Enviar `recompensa: 0` para indicar que no se ofrece recompensa económica.',
+  })
+  updateReward(
+    @Param('id') mascotaId: string,
+    @CurrentUser('personaId') personaId: string,
+    @Body() dto: UpdateRewardDto,
+  ) {
+    return this.petsService.updateReward(mascotaId, personaId, dto.recompensa);
   }
 
   @Put(':id/location')

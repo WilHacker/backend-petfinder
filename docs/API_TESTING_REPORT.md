@@ -2025,77 +2025,178 @@ Ver detalles completos en **Sprint 2 — H12 — `GET /pets/{id}/scans`**.
 
 ## H18 — Avistamientos de mascotas perdidas
 
-> ⏳ **Pendiente de implementación.** Cualquier usuario de la app puede reportar un avistamiento de una mascota perdida con foto de evidencia y coordenadas GPS. El dueño puede agradecer el reporte.
+> Cualquier persona (sin cuenta) puede reportar un avistamiento de una mascota perdida con coordenadas GPS obligatorias, mensaje opcional y foto de evidencia opcional (H20). El dueño puede agradecer el reporte.
 
 ### `POST /sightings/pets/{petId}` — reportar avistamiento
 
-**Request (planificado):**
+**Request:** público — sin JWT. Multipart/form-data.
 
 ```http
-POST /sightings/pets/776cb109-96d4-4e00-b4db-59ab18ac1325/
-Authorization: Bearer <accessToken>
+POST /sightings/pets/776cb109-96d4-4e00-b4db-59ab18ac1325
 Content-Type: multipart/form-data
 ```
 
-```text
-lat=-17.3950
-lng=-66.1470
-descripcion=Vi al perro cerca del parque principal
-foto=@evidencia.jpg (opcional — ver H20)
-```
+Campos:
 
-**Response esperado — 201 Created:**
+| Campo | Tipo | Requerido | Descripción |
+| --- | --- | --- | --- |
+| `lat` | number | ✅ | Latitud del avistamiento (`-90` a `90`) |
+| `lng` | number | ✅ | Longitud del avistamiento (`-180` a `180`) |
+| `mensajeRescatista` | string | — | Descripción del lugar, estado del animal, etc. (máx. 500 car.) |
+| `foto` | binary | — | Foto de evidencia del lugar (jpeg/png/webp — ver H20) |
+
+**Response — 201 Created:**
 
 ```json
 {
-  "avistamientoId": "uuid",
-  "mascotaId": "776cb109-...",
-  "reportadoPor": "personaId del reporter",
-  "lat": -17.395,
-  "lng": -66.147,
-  "descripcion": "Vi al perro cerca del parque principal",
+  "avistamientoId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "mascotaId": "776cb109-96d4-4e00-b4db-59ab18ac1325",
+  "mensajeRescatista": "Lo vi cerca del mercado central, estaba asustado",
   "fotoEvidenciaUrl": null,
-  "creadoEl": "2026-05-22T10:00:00.000Z"
+  "fechaAvistamiento": "2026-05-22T14:30:00.000Z",
+  "lat": -17.3935,
+  "lng": -66.1457
 }
 ```
 
-**Estado:** ⏳ No implementado
+**Casos de error:**
+
+- `lat`/`lng` ausentes → 400 validación ✅
+- `lat`/`lng` fuera de rango → 400 con detalle de campo ✅
+- `petId` inexistente → 404 `"Mascota no encontrada"` ✅
+
+**Estado:** ✅ OK
+
+**Notas:**
+
+- Endpoint **público** — no requiere JWT. Cualquiera que vio la mascota puede reportar.
+- `lat` y `lng` se envían como strings en multipart; el DTO aplica `@Transform(parseFloat)` internamente.
+- `fotoEvidenciaUrl` es `null` si no se adjunta foto.
 
 ---
 
 ### `GET /sightings/pets/{petId}` — listar avistamientos
 
-**Estado:** ⏳ No implementado
+**Request:** requiere JWT + ser propietario o cuidador de la mascota.
+
+**Response — 200 OK:**
+
+```json
+[
+  {
+    "avistamientoId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+    "mascotaId": "776cb109-96d4-4e00-b4db-59ab18ac1325",
+    "mensajeRescatista": "Lo vi cerca del mercado central, estaba asustado",
+    "fotoEvidenciaUrl": "https://res.cloudinary.com/daelr9ppy/image/upload/.../evidencia.jpg",
+    "fechaAvistamiento": "2026-05-22T14:30:00.000Z",
+    "lat": -17.3935,
+    "lng": -66.1457
+  }
+]
+```
+
+**Estado:** ✅ OK
+
+**Notas:**
+
+- Ordenado del más reciente al más antiguo (`fecha_avistamiento DESC`).
+- Usuario no propietario ni cuidador → 403 `"No tienes acceso a esta mascota"`.
 
 ---
 
 ### `POST /sightings/{id}/thanks` — agradecer avistamiento
 
-**Estado:** ⏳ No implementado
+**Request:** requiere JWT. Solo el dueño de la mascota puede agradecer.
+
+```json
+{ "mensaje": "¡Muchas gracias por avisar! Ya lo encontramos gracias a ti." }
+```
+
+**Response — 201 Created:**
+
+```json
+{
+  "agradecimientoId": 1,
+  "avistamientoId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "mensaje": "¡Muchas gracias por avisar! Ya lo encontramos gracias a ti.",
+  "creadoEl": "2026-05-22T15:00:00.000Z",
+  "autor": {
+    "usuarioId": "fc2e47f0-cce1-4665-af7a-d75056d675b3",
+    "persona": {
+      "nombre": "Juan Carlos",
+      "apellidoPaterno": "Pérez",
+      "fotoPerfilUrl": "https://res.cloudinary.com/..."
+    }
+  }
+}
+```
+
+**Casos de error:**
+
+- `avistamientoId` inexistente → 404 `"Avistamiento no encontrado"` ✅
+- Quien agradece no es dueño → 403 `"Solo el dueño puede agradecer"` ✅
+- `mensaje` vacío → 400 validación ✅
+
+**Estado:** ✅ OK
 
 ---
 
 ### `GET /sightings/{id}/thanks` — ver agradecimientos
 
-**Estado:** ⏳ No implementado
+**Request:** público — sin JWT.
+
+**Response — 200 OK:**
+
+```json
+[
+  {
+    "agradecimientoId": 1,
+    "avistamientoId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+    "mensaje": "¡Muchas gracias por avisar!",
+    "creadoEl": "2026-05-22T15:00:00.000Z",
+    "autor": {
+      "usuarioId": "fc2e47f0-...",
+      "persona": {
+        "nombre": "Juan Carlos",
+        "apellidoPaterno": "Pérez",
+        "fotoPerfilUrl": null
+      }
+    }
+  }
+]
+```
+
+**Estado:** ✅ OK
 
 ---
 
 ## H20 — Foto de evidencia en avistamiento
 
-> ⏳ **Pendiente de implementación.** Extensión de H18 — el mismo endpoint de avistamiento acepta un campo `foto` de tipo `binary` (multipart). La foto se sube a Cloudinary.
+> 🔁 **Cross-sprint desde H18:** extensión del mismo endpoint. El campo `foto` (binary, multipart) sube la imagen de evidencia a Cloudinary y devuelve la URL en `fotoEvidenciaUrl`.
 
 ### `POST /sightings/pets/{petId}` — con foto
 
-> 🔁 **Cross-sprint desde H18:** mismo endpoint. Aquí se documenta la parte de subida de foto de evidencia.
+**Campo adicional:**
 
-**Campo adicional en el request:**
+| Campo | Tipo | Descripción |
+| --- | --- | --- |
+| `foto` | binary | Imagen del lugar del avistamiento (jpeg/png/webp, sin límite de tamaño explícito) |
 
-```text
-foto=@evidencia.jpg  (jpeg, png, webp — máx. 5 MB)
+**Response — 201 Created (con foto):**
+
+```json
+{
+  "avistamientoId": "abc12345-...",
+  "mascotaId": "776cb109-...",
+  "mensajeRescatista": "Lo vi cerca del parque",
+  "fotoEvidenciaUrl": "https://res.cloudinary.com/daelr9ppy/image/upload/v.../avistamientos/776cb109-.../foto.jpg",
+  "fechaAvistamiento": "2026-05-22T14:35:00.000Z",
+  "lat": -17.395,
+  "lng": -66.147
+}
 ```
 
-**Estado:** ⏳ No implementado (depende de H18)
+**Estado:** ✅ OK — foto subida a Cloudinary en carpeta `avistamientos/{mascotaId}/`.
 
 ---
 
@@ -2267,6 +2368,73 @@ Los 3 métodos `sendPetLostAlert`, `sendQrScanAlert` y `sendZoneAlert` ahora est
 
 ---
 
+## E6 — 🔴 CRÍTICO ✅ RESUELTO — Build TypeScript fallaba en `notifications.service.ts`
+
+**Archivo afectado:** `src/infrastructure/notifications/notifications.service.ts`
+
+**Síntoma:** `npm run build` fallaba con:
+
+```text
+TS2322: Type 'undefined' is not assignable to type 'number'
+```
+
+**Causa raíz:** `sendRadiusAlert` declara `Promise<number>` como tipo de retorno, pero tenía un `return;` desnudo (retorna `undefined`) en el guard de "no hay filas":
+
+```typescript
+if (!rows.length) return;   // ← retorna undefined, no number
+```
+
+**Fix aplicado:**
+
+```diff
+- if (!rows.length) return;
++ if (!rows.length) return 0;
+```
+
+**Verificación:** `npm run build` completa sin errores.
+
+---
+
+## E7 — 🟡 MEDIO ✅ RESUELTO — `POST /sightings/pets/{petId}` rechazaba `lat`/`lng` en multipart
+
+**Endpoint afectado:** `POST /sightings/pets/{petId}` (Sprint 4 — H18)
+
+**Síntoma:** al enviar la request como `multipart/form-data` (obligatorio para adjuntar foto), `lat` y `lng` llegaban como strings. El decorador `@IsNumber()` rechazaba los valores → 400 `"lat must be a number conforming to the specified constraints"`.
+
+Enviar como JSON (`Content-Type: application/json`) funcionaba, pero eso impide adjuntar el campo `foto` binario.
+
+**Causa raíz:** `CreateSightingDto` no tenía `@Transform` para parsear los strings a `number` antes de la validación:
+
+```typescript
+// Antes — sólo funciona con JSON
+@IsNumber()
+lat!: number;
+```
+
+**Fix aplicado** (`src/modules/sightings/dto/create-sighting.dto.ts`):
+
+```typescript
+import { Transform } from 'class-transformer';
+
+@Transform(({ value }) => parseFloat(value as string))
+@IsNumber()
+lat!: number;
+
+@Transform(({ value }) => parseFloat(value as string))
+@IsNumber()
+lng!: number;
+```
+
+**Verificación live:**
+
+```bash
+curl -X POST http://localhost:3000/sightings/pets/{petId} \
+  -F "lat=-17.3935" -F "lng=-66.1457" -F "mensajeRescatista=Test" \
+  → 201 Created ✅
+```
+
+---
+
 ## Resumen final
 
 ## Cobertura por sprint
@@ -2276,9 +2444,9 @@ Los 3 métodos `sendPetLostAlert`, `sendQrScanAlert` y `sendZoneAlert` ahora est
 | **Sprint 1** | H1, H2, H3, H10, H31, H32 | 28 | 0 |
 | **Sprint 2** | H4, H9, H11, H12, H13, H19 | 11 | 0 |
 | **Sprint 3** | H5, H6, H7, H8, H14, H15 | 10 | 0 |
-| **Sprint 4** | H16, H17, H18, H20, H21, H24 | 7 | 4 (H18, H20) |
+| **Sprint 4** | H16, H17, H18, H20, H21, H24 | 11 | 0 |
 | **Soporte** | Tipos mascota, Users | 7 | 0 |
-| **TOTAL** | **24 historias** | **56** | **4** |
+| **TOTAL** | **24 historias** | **67** | **0** |
 
 ## Cobertura por módulo
 
@@ -2290,14 +2458,15 @@ Los 3 métodos `sendPetLostAlert`, `sendQrScanAlert` y `sendZoneAlert` ahora est
 | **Pets** | 24 | 24 | 24 | 0 | 0 |
 | **Geofencing** | 10 | 10 | 10 | 0 | 0 |
 | **Map** | 2 | 2 | 2 | 0 | 0 |
+| **Sightings** | 4 | 4 | 4 | 0 | 0 |
 | **WebSocket** | 1 namespace | 1 | 1 | 0 | 0 |
-| **TOTAL** | **54 + 1 WS** | **54** | **54** | **0** | **0** |
+| **TOTAL** | **58 + 1 WS** | **58** | **58** | **0** | **0** |
 
 ## Cifras
 
-- **Tasa de éxito (happy path):** 54/54 = **100 %**
-- **Bugs críticos:** 0 ✅ (E1 resuelto)
-- **Bugs medios:** 0 ✅ (E2, E3 resueltos)
+- **Tasa de éxito (happy path):** 58/58 = **100 %**
+- **Bugs críticos:** 0 ✅ (E1, E6 resueltos)
+- **Bugs medios:** 0 ✅ (E2, E3, E7 resueltos)
 - **Mejoras menores:** 0 ✅ (E4, E5 resueltos)
 - **Tests unitarios:** 256/256 en verde
 
@@ -2316,8 +2485,9 @@ Los 3 métodos `sendPetLostAlert`, `sendQrScanAlert` y `sendZoneAlert` ahora est
 
 ## Próximos pasos
 
-1. Implementar módulo de Avistamientos (H18 + H20 — Sprint 4).
-2. Probar FCM end-to-end con device token Kotlin real.
-3. Agregar tests de integración para la transición `extraviada` y prevenir regresiones de E1.
+1. Probar FCM end-to-end con device token Kotlin real.
+2. Agregar tests de integración para la transición `extraviada` y prevenir regresiones de E1.
+3. Probar `pet:entered-zone` / `pet:exited-zone` WebSocket con geofencing polling activo.
+4. Probar `owner:profile-updated` WebSocket vía `PUT /users/me/photo` con foto real a Cloudinary.
 
 ---
