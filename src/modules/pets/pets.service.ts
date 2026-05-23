@@ -207,7 +207,12 @@ export class PetsService {
     return { message: 'Mascota eliminada' };
   }
 
-  async getQr(mascotaId: string, personaId: string, size = 300): Promise<string> {
+  async getQr(
+    mascotaId: string,
+    personaId: string,
+    size = 300,
+    format: 'svg' | 'png' = 'png',
+  ): Promise<string> {
     const mascota = await this.prisma.mascota.findUnique({
       where: { mascotaId },
       include: { propietarios: true, placaQr: true },
@@ -218,8 +223,35 @@ export class PetsService {
 
     const frontendUrl = this.config.get<string>('FRONTEND_URL', 'https://petfinder.app');
     const url = `${frontendUrl}/scan/${mascota.placaQr.tokenAcceso}`;
+
+    if (format === 'svg') {
+      return QRCode.toString(url, { type: 'svg' });
+    }
+
     const clampedSize = Math.min(Math.max(size, 100), 1000);
     return QRCode.toDataURL(url, { width: clampedSize });
+  }
+
+  async sendCommunityAlert(
+    mascotaId: string,
+    personaId: string,
+    radio: number,
+  ): Promise<{ message: string; usuariosNotificados: number }> {
+    const mascota = await this.prisma.mascota.findUnique({
+      where: { mascotaId },
+      include: { propietarios: true },
+    });
+    if (!mascota) throw new NotFoundException('Mascota no encontrada');
+    this.checkOwnership(mascota, personaId);
+
+    const count = await this.notifications.sendRadiusAlert(mascotaId, radio);
+    return {
+      message:
+        count > 0
+          ? `Alerta enviada a ${count} usuario(s) cercano(s)`
+          : 'No hay usuarios cercanos con la app activa en ese radio',
+      usuariosNotificados: count,
+    };
   }
 
   async addOwner(mascotaId: string, personaId: string, dto: AddOwnerDto) {
@@ -230,20 +262,23 @@ export class PetsService {
     if (!mascota) throw new NotFoundException('Mascota no encontrada');
     this.checkOwnership(mascota, personaId);
 
-    const personaExiste = await this.prisma.persona.findUnique({
-      where: { personaId: dto.personaId },
-      select: { personaId: true },
+    const usuarioDestino = await this.prisma.usuario.findUnique({
+      where: { correoElectronico: dto.correoElectronico },
+      select: { usuarioId: true, personaId: true },
     });
-    if (!personaExiste) throw new NotFoundException('La persona indicada no existe');
+    if (!usuarioDestino)
+      throw new NotFoundException('No existe una cuenta con ese correo electrónico');
 
-    const yaEsPropietario = mascota.propietarios.some((p) => p.personaId === dto.personaId);
+    const targetPersonaId = usuarioDestino.personaId;
+
+    const yaEsPropietario = mascota.propietarios.some((p) => p.personaId === targetPersonaId);
     if (yaEsPropietario)
       throw new BadRequestException('Esta persona ya es propietaria o cuidadora de la mascota');
 
     const nuevaRelacion = await this.prisma.propietarioMascota.create({
       data: {
         mascotaId,
-        personaId: dto.personaId,
+        personaId: targetPersonaId,
         tipoRelacion: dto.tipoRelacion ?? RelacionPropietario.Cuidador,
         recibeAlertas: dto.recibeAlertas ?? true,
         mostrarEnQr: dto.mostrarEnQr ?? true,
@@ -251,15 +286,9 @@ export class PetsService {
       include: { persona: true },
     });
 
-    // Busca usuarioId del nuevo propietario para forzar unión al room de la mascota
-    const nuevoUsuario = await this.prisma.usuario.findUnique({
-      where: { personaId: dto.personaId },
-      select: { usuarioId: true },
-    });
-
-    this.realtime.emitOwnerAdded(mascotaId, nuevoUsuario?.usuarioId ?? null, {
+    this.realtime.emitOwnerAdded(mascotaId, usuarioDestino.usuarioId, {
       mascotaId,
-      personaId: dto.personaId,
+      personaId: targetPersonaId,
       nombreCompleto:
         `${nuevaRelacion.persona.nombre} ${nuevaRelacion.persona.apellidoPaterno}`.trim(),
       tipoRelacion: nuevaRelacion.tipoRelacion ?? RelacionPropietario.Cuidador,

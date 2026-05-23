@@ -1,11 +1,11 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsEnum, IsOptional, IsUUID } from 'class-validator';
+import { IsBoolean, IsEmail, IsEnum, IsOptional } from 'class-validator';
 import { RelacionPropietario } from '@prisma/client';
 
 export class AddOwnerDto {
-  @ApiProperty({ example: 'uuid-de-la-persona' })
-  @IsUUID('4', { message: 'El ID de la persona debe ser un UUID v4 válido' })
-  personaId!: string;
+  @ApiProperty({ example: 'juan@example.com' })
+  @IsEmail({}, { message: 'Debe ser un correo electrónico válido' })
+  correoElectronico!: string;
 
   @ApiPropertyOptional({ enum: RelacionPropietario })
   @IsOptional()

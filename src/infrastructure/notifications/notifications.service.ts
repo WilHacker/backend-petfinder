@@ -107,9 +107,9 @@ export class NotificationsService implements OnModuleInit {
     }
   }
 
-  async sendRadiusAlert(mascotaId: string, radioMetros = 5000) {
+  async sendRadiusAlert(mascotaId: string, radioMetros = 5000): Promise<number> {
     try {
-      if (!this.app) return;
+      if (!this.app) return 0;
 
       const rows = await this.prisma.$queryRaw<Array<{ lat: number; lng: number; nombre: string }>>`
         SELECT
@@ -120,7 +120,7 @@ export class NotificationsService implements OnModuleInit {
         WHERE mascota_id = ${mascotaId}::uuid
           AND ultima_ubicacion_conocida IS NOT NULL
       `;
-      if (!rows.length) return;
+      if (!rows.length) return 0;
 
       const { lat, lng, nombre } = rows[0];
 
@@ -145,7 +145,7 @@ export class NotificationsService implements OnModuleInit {
       `;
 
       const tokens = usuarios.map((u) => u.token_fcm).filter(Boolean);
-      if (!tokens.length) return;
+      if (!tokens.length) return 0;
 
       await admin.messaging().sendEachForMulticast({
         tokens,
@@ -159,8 +159,10 @@ export class NotificationsService implements OnModuleInit {
       this.logger.log(
         `Alerta radio enviada a ${tokens.length} usuario(s) (radio: ${radioMetros}m) — mascota: ${mascotaId}`,
       );
+      return tokens.length;
     } catch (err) {
       this.logger.error(`sendRadiusAlert falló (mascota ${mascotaId})`, err as Error);
+      return 0;
     }
   }
 

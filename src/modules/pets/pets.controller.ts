@@ -10,10 +10,12 @@ import {
   Post,
   Put,
   Query,
+  Res,
   UploadedFiles,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import {
   ApiBearerAuth,
@@ -29,6 +31,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { Public } from '../../common/decorators/public.decorator';
 import { ScanDto } from './dto/scan.dto';
 import { AddOwnerDto } from './dto/add-owner.dto';
+import { CommunityAlertDto } from './dto/community-alert.dto';
 import { CreateMedicalRecordDto } from './dto/create-medical-record.dto';
 import { UpdateMedicalRecordDto } from './dto/update-medical-record.dto';
 import { CreatePetDto } from './dto/create-pet.dto';
@@ -212,22 +215,54 @@ export class PetsController {
 
   @Get(':id/qr')
   @ApiOperation({
-    summary: 'Obtener imagen QR de la placa (base64)',
+    summary: 'Obtener QR de la placa',
     description:
-      'Retorna data URL PNG. Usar ?size=600 o mayor para impresión (default 300, máx 1000).',
+      '?format=svg → SVG vectorial listo para escalar/imprimir (recomendado). ' +
+      '?format=png → data URL base64 PNG (default). ' +
+      '?size=600 controla el tamaño del PNG (100–1000, default 300). ' +
+      'Android convierte el SVG a PDF/JPEG/PNG localmente con AndroidSVG + PdfDocument.',
+  })
+  @ApiQuery({
+    name: 'format',
+    required: false,
+    enum: ['png', 'svg'],
+    description: 'Formato de salida. Default png.',
   })
   @ApiQuery({
     name: 'size',
     required: false,
     type: Number,
-    description: 'Tamaño en px (100–1000). Default 300.',
+    description: 'Tamaño PNG en px (100–1000). Default 300. Ignorado si format=svg.',
   })
-  getQr(
+  async getQr(
     @Param('id') mascotaId: string,
     @CurrentUser('personaId') personaId: string,
     @Query('size', new ParseIntPipe({ optional: true })) size?: number,
+    @Query('format') format?: string,
+    @Res({ passthrough: true }) res?: Response,
   ) {
-    return this.petsService.getQr(mascotaId, personaId, size);
+    const fmt = format === 'svg' ? 'svg' : 'png';
+    const content = await this.petsService.getQr(mascotaId, personaId, size, fmt);
+    if (fmt === 'svg' && res) {
+      res.setHeader('Content-Type', 'image/svg+xml');
+      res.setHeader('Content-Disposition', 'attachment; filename="qr.svg"');
+    }
+    return content;
+  }
+
+  @Post(':id/alert/community')
+  @ApiOperation({
+    summary: 'Enviar alerta de búsqueda a usuarios cercanos (botón manual)',
+    description:
+      'Envía push FCM a usuarios activos dentro del radio indicado (excluye a los propietarios). ' +
+      'Requiere que la mascota tenga ubicación GPS registrada. Radio default: 5 000 m.',
+  })
+  sendCommunityAlert(
+    @Param('id') mascotaId: string,
+    @CurrentUser('personaId') personaId: string,
+    @Body() dto: CommunityAlertDto,
+  ) {
+    return this.petsService.sendCommunityAlert(mascotaId, personaId, dto.radio ?? 5000);
   }
 
   @Post(':id/owners')

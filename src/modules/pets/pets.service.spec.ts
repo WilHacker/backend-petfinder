@@ -10,6 +10,7 @@ import { PetsService } from './pets.service';
 
 jest.mock('qrcode', () => ({
   toDataURL: jest.fn().mockResolvedValue('data:image/png;base64,abc123'),
+  toString: jest.fn().mockResolvedValue('<svg xmlns="http://www.w3.org/2000/svg">...</svg>'),
 }));
 
 const PERSONA_ID = 'persona-uuid';
@@ -126,7 +127,7 @@ const mockRealtime = {
 const mockNotifications = {
   sendPetLostAlert: jest.fn().mockResolvedValue(undefined),
   sendZoneAlert: jest.fn().mockResolvedValue(undefined),
-  sendRadiusAlert: jest.fn().mockResolvedValue(undefined),
+  sendRadiusAlert: jest.fn().mockResolvedValue(3),
 };
 
 describe('PetsService', () => {
@@ -333,10 +334,62 @@ describe('PetsService', () => {
       });
     });
 
+    it('genera SVG cuando format=svg', async () => {
+      mockPrisma.mascota.findUnique.mockResolvedValue(mockMascota);
+
+      const result = await service.getQr(MASCOTA_ID, PERSONA_ID, 300, 'svg');
+
+      expect(result).toContain('<svg');
+      const QRCode = jest.requireMock('qrcode');
+      expect(QRCode.toString).toHaveBeenCalledWith(`http://localhost:4200/scan/${TOKEN_ACCESO}`, {
+        type: 'svg',
+      });
+    });
+
     it('lanza NotFoundException si la mascota no tiene placa QR', async () => {
       mockPrisma.mascota.findUnique.mockResolvedValue({ ...mockMascota, placaQr: null });
 
       await expect(service.getQr(MASCOTA_ID, PERSONA_ID)).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  // ─────────────────── sendCommunityAlert ──────────────────────
+
+  describe('sendCommunityAlert', () => {
+    beforeEach(() => {
+      mockPrisma.mascota.findUnique.mockResolvedValue(mockMascota);
+      mockNotifications.sendRadiusAlert.mockResolvedValue(3);
+    });
+
+    it('retorna el conteo de usuarios notificados', async () => {
+      const result = await service.sendCommunityAlert(MASCOTA_ID, PERSONA_ID, 5000);
+
+      expect(result.usuariosNotificados).toBe(3);
+      expect(result.message).toContain('3 usuario(s)');
+      expect(mockNotifications.sendRadiusAlert).toHaveBeenCalledWith(MASCOTA_ID, 5000);
+    });
+
+    it('retorna mensaje alternativo cuando no hay usuarios cercanos', async () => {
+      mockNotifications.sendRadiusAlert.mockResolvedValue(0);
+
+      const result = await service.sendCommunityAlert(MASCOTA_ID, PERSONA_ID, 1000);
+
+      expect(result.usuariosNotificados).toBe(0);
+      expect(result.message).toContain('No hay usuarios');
+    });
+
+    it('lanza NotFoundException si la mascota no existe', async () => {
+      mockPrisma.mascota.findUnique.mockResolvedValue(null);
+
+      await expect(service.sendCommunityAlert(MASCOTA_ID, PERSONA_ID, 5000)).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('lanza ForbiddenException si no es propietario', async () => {
+      await expect(
+        service.sendCommunityAlert(MASCOTA_ID, 'otro-persona-uuid', 5000),
+      ).rejects.toThrow(ForbiddenException);
     });
   });
 
@@ -352,30 +405,39 @@ describe('PetsService', () => {
 
     beforeEach(() => {
       mockPrisma.mascota.findUnique.mockResolvedValue(mockMascota);
-      mockPrisma.persona.findUnique.mockResolvedValue({ personaId: 'coprop-uuid' });
-      mockPrisma.usuario.findUnique.mockResolvedValue(null);
+      mockPrisma.usuario.findUnique.mockResolvedValue({
+        usuarioId: 'coprop-user-uuid',
+        personaId: 'coprop-uuid',
+      });
       mockPrisma.propietarioMascota.create.mockResolvedValue(mockNuevaRelacion);
     });
 
     it('agrega un co-propietario a la mascota', async () => {
-      const result = await service.addOwner(MASCOTA_ID, PERSONA_ID, { personaId: 'coprop-uuid' });
+      const result = await service.addOwner(MASCOTA_ID, PERSONA_ID, {
+        correoElectronico: 'ana@example.com',
+      });
 
       expect(result.personaId).toBe('coprop-uuid');
       expect(mockPrisma.propietarioMascota.create).toHaveBeenCalledTimes(1);
       expect(mockRealtime.emitOwnerAdded).toHaveBeenCalledTimes(1);
     });
 
-    it('lanza NotFoundException si la persona indicada no existe', async () => {
-      mockPrisma.persona.findUnique.mockResolvedValue(null);
+    it('lanza NotFoundException si el correo no tiene cuenta asociada', async () => {
+      mockPrisma.usuario.findUnique.mockResolvedValue(null);
 
       await expect(
-        service.addOwner(MASCOTA_ID, PERSONA_ID, { personaId: 'no-existe' }),
+        service.addOwner(MASCOTA_ID, PERSONA_ID, { correoElectronico: 'noexiste@example.com' }),
       ).rejects.toThrow(NotFoundException);
     });
 
     it('lanza BadRequestException si la persona ya es propietaria', async () => {
+      mockPrisma.usuario.findUnique.mockResolvedValue({
+        usuarioId: 'owner-user-uuid',
+        personaId: PERSONA_ID,
+      });
+
       await expect(
-        service.addOwner(MASCOTA_ID, PERSONA_ID, { personaId: PERSONA_ID }),
+        service.addOwner(MASCOTA_ID, PERSONA_ID, { correoElectronico: 'owner@example.com' }),
       ).rejects.toThrow(BadRequestException);
     });
   });

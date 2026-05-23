@@ -36,6 +36,7 @@ const mockPetsService = {
   addMedicalRecord: jest.fn(),
   updateMedicalRecord: jest.fn(),
   removeMedicalRecord: jest.fn(),
+  sendCommunityAlert: jest.fn(),
 };
 
 const mockJwtService = { verifyAsync: jest.fn() };
@@ -121,17 +122,17 @@ describe('PetsController', () => {
     expect(mockPetsService.remove).toHaveBeenCalledWith(MASCOTA_ID, PERSONA_ID);
   });
 
-  it('getQr delega a petsService.getQr y retorna base64', async () => {
+  it('getQr delega a petsService.getQr y retorna base64 (format=png por defecto)', async () => {
     mockPetsService.getQr.mockResolvedValue('data:image/png;base64,abc');
 
-    const result = await controller.getQr(MASCOTA_ID, PERSONA_ID, undefined);
+    const result = await controller.getQr(MASCOTA_ID, PERSONA_ID, undefined, undefined, undefined);
 
-    expect(mockPetsService.getQr).toHaveBeenCalledWith(MASCOTA_ID, PERSONA_ID, undefined);
+    expect(mockPetsService.getQr).toHaveBeenCalledWith(MASCOTA_ID, PERSONA_ID, undefined, 'png');
     expect(result).toBe('data:image/png;base64,abc');
   });
 
   it('addOwner delega a petsService.addOwner', async () => {
-    const dto: AddOwnerDto = { personaId: 'otro-uuid' };
+    const dto: AddOwnerDto = { correoElectronico: 'otro@example.com' };
     mockPetsService.addOwner.mockResolvedValue({});
 
     await controller.addOwner(MASCOTA_ID, PERSONA_ID, dto);
