@@ -236,7 +236,7 @@ export class PetsService {
     mascotaId: string,
     personaId: string,
     radio: number,
-  ): Promise<{ message: string; usuariosNotificados: number }> {
+  ): Promise<{ message: string; usuariosNotificados: number; razon?: string }> {
     const mascota = await this.prisma.mascota.findUnique({
       where: { mascotaId },
       include: { propietarios: true },
@@ -244,13 +244,33 @@ export class PetsService {
     if (!mascota) throw new NotFoundException('Mascota no encontrada');
     this.checkOwnership(mascota, personaId);
 
+    const gpsRows = await this.prisma.$queryRaw<Array<{ tiene_gps: boolean }>>`
+      SELECT ultima_ubicacion_conocida IS NOT NULL AS tiene_gps
+      FROM mascotas
+      WHERE mascota_id = ${mascotaId}::uuid
+    `;
+    if (!gpsRows[0]?.tiene_gps) {
+      throw new BadRequestException(
+        'La mascota no tiene ubicación GPS registrada. ' +
+          'Actualiza su ubicación con PUT /pets/{id}/location antes de enviar la alerta.',
+      );
+    }
+
     const count = await this.notifications.sendRadiusAlert(mascotaId, radio);
+
+    if (count > 0) {
+      return {
+        message: `Alerta enviada a ${count} usuario(s) cercano(s)`,
+        usuariosNotificados: count,
+      };
+    }
+
     return {
-      message:
-        count > 0
-          ? `Alerta enviada a ${count} usuario(s) cercano(s)`
-          : 'No hay usuarios cercanos con la app activa en ese radio',
-      usuariosNotificados: count,
+      message: 'No se pudo notificar a nadie',
+      usuariosNotificados: 0,
+      razon:
+        `No hay usuarios con la app activa y GPS conocido dentro del radio de ${radio / 1000} km. ` +
+        'Intenta ampliar el radio o espera a que haya más usuarios cerca.',
     };
   }
 

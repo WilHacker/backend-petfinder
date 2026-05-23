@@ -271,7 +271,9 @@ export class PetsController {
     summary: 'Enviar alerta de búsqueda a usuarios cercanos (botón manual)',
     description:
       'Envía push FCM a usuarios activos dentro del radio indicado (excluye a los propietarios). ' +
-      'Requiere que la mascota tenga ubicación GPS registrada. Radio default: 5 000 m.',
+      'Requiere que la mascota tenga ubicación GPS registrada (400 si no la tiene). ' +
+      'Si nadie fue notificado, la respuesta incluye el campo `razon` explicando por qué. ' +
+      'Radio default: 5 000 m.',
   })
   sendCommunityAlert(
     @Param('id') mascotaId: string,

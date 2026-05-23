@@ -359,6 +359,7 @@ describe('PetsService', () => {
   describe('sendCommunityAlert', () => {
     beforeEach(() => {
       mockPrisma.mascota.findUnique.mockResolvedValue(mockMascota);
+      mockPrisma.$queryRaw.mockResolvedValue([{ tiene_gps: true }]);
       mockNotifications.sendRadiusAlert.mockResolvedValue(3);
     });
 
@@ -370,13 +371,22 @@ describe('PetsService', () => {
       expect(mockNotifications.sendRadiusAlert).toHaveBeenCalledWith(MASCOTA_ID, 5000);
     });
 
-    it('retorna mensaje alternativo cuando no hay usuarios cercanos', async () => {
+    it('retorna mensaje y razon cuando no hay usuarios cercanos', async () => {
       mockNotifications.sendRadiusAlert.mockResolvedValue(0);
 
       const result = await service.sendCommunityAlert(MASCOTA_ID, PERSONA_ID, 1000);
 
       expect(result.usuariosNotificados).toBe(0);
-      expect(result.message).toContain('No hay usuarios');
+      expect(result.message).toBe('No se pudo notificar a nadie');
+      expect(result.razon).toContain('1 km');
+    });
+
+    it('lanza BadRequestException si la mascota no tiene GPS', async () => {
+      mockPrisma.$queryRaw.mockResolvedValue([{ tiene_gps: false }]);
+
+      await expect(service.sendCommunityAlert(MASCOTA_ID, PERSONA_ID, 5000)).rejects.toThrow(
+        BadRequestException,
+      );
     });
 
     it('lanza NotFoundException si la mascota no existe', async () => {
