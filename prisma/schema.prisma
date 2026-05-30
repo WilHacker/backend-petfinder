@@ -332,13 +332,14 @@ model AgradecimientoRescatista {
 }
 
 model ComentarioAvistamiento {
-  comentarioId   String    @id @default(dbgenerated("uuid_generate_v4()")) @map("comentario_id") @db.Uuid
-  avistamientoId String    @map("avistamiento_id") @db.Uuid
-  autorUsuarioId String?   @map("autor_usuario_id") @db.Uuid
-  mensaje        String
-  fotoUrl        String?   @map("foto_url")
-  ubicacionGps   Unsupported("geometry(Point, 4326)")? @map("ubicacion_gps")
-  creadoEl       DateTime? @default(now()) @map("creado_el") @db.Timestamptz
+  comentarioId    String    @id @default(dbgenerated("uuid_generate_v4()")) @map("comentario_id") @db.Uuid
+  avistamientoId  String    @map("avistamiento_id") @db.Uuid
+  autorUsuarioId  String?   @map("autor_usuario_id") @db.Uuid
+  replyToUserId   String?   @map("reply_to_user_id") @db.Uuid
+  mensaje         String
+  fotoUrl         String?   @map("foto_url")
+  ubicacionGps    Unsupported("geometry(Point, 4326)")? @map("ubicacion_gps")
+  creadoEl        DateTime? @default(now()) @map("creado_el") @db.Timestamptz
 
   avistamiento Avistamiento @relation(fields: [avistamientoId], references: [avistamientoId], onDelete: Cascade)
   autor        Usuario?     @relation(fields: [autorUsuarioId], references: [usuarioId], onDelete: SetNull)

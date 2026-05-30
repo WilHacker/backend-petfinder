@@ -110,6 +110,11 @@ export class SightingsController {
           description: 'Solo se guarda si se adjunta foto (privacidad)',
         },
         lng: { type: 'number', example: -66.157 },
+        replyToUserId: {
+          type: 'string',
+          format: 'uuid',
+          description: 'UUID del comentarista al que el dueño responde (hilo privado bilateral)',
+        },
         foto: { type: 'string', format: 'binary' },
       },
     },
@@ -132,14 +137,17 @@ export class SightingsController {
   }
 
   @Get(':id/comments')
-  @Public()
   @ApiOperation({
     summary: 'Ver comentarios de un avistamiento',
     description:
-      'Público. Devuelve comentarios con autor, foto y ubicación (solo si fue enviada con foto).',
+      'Requiere JWT. El dueño ve todos los comentarios. ' +
+      'Un comentarista solo ve sus propios mensajes y las respuestas del dueño dirigidas a él.',
   })
-  getComments(@Param('id', ParseUUIDPipe) avistamientoId: string) {
-    return this.sightingsService.getComments(avistamientoId);
+  getComments(
+    @Param('id', ParseUUIDPipe) avistamientoId: string,
+    @CurrentUser('sub') usuarioId: string,
+  ) {
+    return this.sightingsService.getComments(avistamientoId, usuarioId);
   }
 
   @Post(':id/rating')

@@ -41,6 +41,7 @@ const mockCommentRow = {
   comentario_id: COMENTARIO_ID,
   avistamiento_id: AVISTAMIENTO_ID,
   autor_usuario_id: USUARIO_ID,
+  reply_to_user_id: null,
   mensaje: 'Vi al perro cerca del parque',
   foto_url: FOTO_URL,
   lat: -17.78,
@@ -321,21 +322,31 @@ describe('SightingsService', () => {
   // ───────────────────────── getComments ───────────────────────
 
   describe('getComments', () => {
-    it('retorna lista de comentarios del avistamiento', async () => {
-      mockPrisma.avistamiento.findUnique.mockResolvedValue({ avistamientoId: AVISTAMIENTO_ID });
+    it('propietario recibe todos los comentarios', async () => {
+      mockPrisma.avistamiento.findUnique.mockResolvedValue(mockAvistamiento);
       mockPrisma.$queryRaw.mockResolvedValue([mockCommentRow]);
 
-      const result = await service.getComments(AVISTAMIENTO_ID);
+      const result = await service.getComments(AVISTAMIENTO_ID, USUARIO_ID);
 
       expect(result).toHaveLength(1);
       expect(result[0].comentarioId).toBe(COMENTARIO_ID);
       expect(result[0].autor?.nombre).toBe('Juan');
     });
 
+    it('comentarista solo ve su hilo bilateral', async () => {
+      mockPrisma.avistamiento.findUnique.mockResolvedValue(mockAvistamiento);
+      mockPrisma.$queryRaw.mockResolvedValue([mockCommentRow]);
+
+      // Solicita con un usuario distinto al propietario
+      const result = await service.getComments(AVISTAMIENTO_ID, 'otro-usuario');
+
+      expect(result).toHaveLength(1);
+    });
+
     it('lanza NotFoundException si el avistamiento no existe', async () => {
       mockPrisma.avistamiento.findUnique.mockResolvedValue(null);
 
-      await expect(service.getComments('no-existe')).rejects.toThrow(NotFoundException);
+      await expect(service.getComments('no-existe', USUARIO_ID)).rejects.toThrow(NotFoundException);
     });
   });
 

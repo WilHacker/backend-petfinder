@@ -30,7 +30,7 @@ Un comentarista puede haber visto la mascota a las 2 pm y reportarlo a las 8 pm 
 |--------|------|------|-------------|
 | `POST` | `/sightings/pets/:petId` | ❌ Público | Crear avistamiento *(ya existía — ahora notifica)* |
 | `POST` | `/sightings/:id/comments` | ✅ JWT | Comentar un avistamiento |
-| `GET` | `/sightings/:id/comments` | ❌ Público | Ver comentarios |
+| `GET` | `/sightings/:id/comments` | ✅ JWT | Ver comentarios (filtrado por rol) |
 | `POST` | `/sightings/:id/rating` | ✅ JWT | Calificar avistamiento (solo dueño) |
 | `GET` | `/sightings/:id/rating` | ❌ Público | Ver calificación |
 
@@ -126,9 +126,12 @@ Authorization: Bearer {token}
 | `mensaje` | `string` | ✅ | Texto del comentario (máx. 500 chars) |
 | `lat` | `number` | ❌ | Latitud — **solo se guarda si se adjunta foto** |
 | `lng` | `number` | ❌ | Longitud — **solo se guarda si se adjunta foto** |
+| `replyToUserId` | `UUID` | ❌ | ID del comentarista al que el **dueño** responde (hilo privado) |
 | `foto` | `file` | ❌ | Foto de evidencia (imagen) |
 
 > ⚠️ **Importante para el frontend:** Si el usuario no adjunta foto, no pidas ni envíes `lat/lng` — el backend los descartará de todas formas. Solo activa el GPS cuando haya foto.
+>
+> El campo `replyToUserId` solo lo usa el **dueño** cuando quiere responderle a un comentarista específico. Un comentarista normal nunca lo envía.
 
 ### Respuesta exitosa `201`
 
@@ -138,11 +141,32 @@ Authorization: Bearer {token}
   "comentarioId": "811f605b-5902-4e32-9aaa-c498b69113e1",
   "avistamientoId": "6fcc2314-48b1-490e-9a0f-ad7c6cef5e20",
   "autorUsuarioId": "145b307f-1d35-4ff6-9557-85070e8c6ddc",
+  "replyToUserId": null,
   "mensaje": "Le saqué foto justo aquí, estaba descansando bajo el árbol",
   "fotoUrl": "https://res.cloudinary.com/daelr9ppy/image/upload/v1780156718/comentarios-avistamiento/6fcc2314-.../foto.png",
   "lat": -17.39,
   "lng": -66.155,
   "creadoEl": "2026-05-30T15:58:39.519Z",
+  "autor": {
+    "nombre": "Wilian",
+    "apellidoPaterno": "Almendras",
+    "fotoPerfilUrl": "https://res.cloudinary.com/..."
+  }
+}
+```
+
+**Respuesta del dueño a un comentarista específico:**
+```json
+{
+  "comentarioId": "9a2f1c3d-...",
+  "avistamientoId": "6fcc2314-...",
+  "autorUsuarioId": "145b307f-...",
+  "replyToUserId": "811f605b-...",
+  "mensaje": "Gracias, ¿recuerdas a qué hora fue exactamente?",
+  "fotoUrl": null,
+  "lat": null,
+  "lng": null,
+  "creadoEl": "2026-05-30T16:10:00.000Z",
   "autor": {
     "nombre": "Wilian",
     "apellidoPaterno": "Almendras",
@@ -157,6 +181,7 @@ Authorization: Bearer {token}
   "comentarioId": "7337f8cd-4c36-4da6-8595-60ad14c839d7",
   "avistamientoId": "6fcc2314-48b1-490e-9a0f-ad7c6cef5e20",
   "autorUsuarioId": "145b307f-1d35-4ff6-9557-85070e8c6ddc",
+  "replyToUserId": null,
   "mensaje": "Lo vi en la tarde por el parque",
   "fotoUrl": null,
   "lat": null,
@@ -205,8 +230,12 @@ Authorization: Bearer {token}
 
 ```
 GET /sightings/:id/comments
-Authorization: no requerido
+Authorization: Bearer {token}
 ```
+
+> **Visibilidad filtrada por rol:**
+> - **Dueño** → ve todos los comentarios de todos los usuarios.
+> - **Comentarista** → solo ve sus propios comentarios y las respuestas del dueño dirigidas a él (`replyToUserId == suId`).
 
 ### Parámetros de ruta
 
@@ -216,7 +245,7 @@ Authorization: no requerido
 
 ### Respuesta exitosa `200`
 
-Array ordenado del más antiguo al más nuevo:
+Array ordenado del más antiguo al más nuevo (filtrado según el token enviado):
 
 ```json
 [
@@ -259,6 +288,7 @@ Array ordenado del más antiguo al más nuevo:
 
 | Código | Mensaje | Causa |
 |--------|---------|-------|
+| `401` | `Token inválido o expirado` | Sin JWT o token vencido |
 | `404` | `Avistamiento no encontrado` | El `id` no existe |
 
 ---
@@ -377,24 +407,34 @@ null
 
 ```
 1. Pantalla de avistamiento
-   └── Al abrir: GET /sightings/{id}/comments
+   └── Al abrir: GET /sightings/{id}/comments   (JWT requerido)
                   GET /sightings/{id}/rating
    └── Escuchar WS: sighting:comment-new → agregar comentario a la lista
                     sighting:rated       → actualizar panel de calificación
 
-2. Botón "Comentar"
-   └── Si el usuario adjunta foto → activar GPS y enviar lat/lng
+2. Botón "Comentar" (cualquier usuario autenticado)
+   └── Si adjunta foto → activar GPS y enviar lat/lng
    └── Si no adjunta foto → NO pedir GPS (backend lo ignora de todas formas)
    └── POST /sightings/{id}/comments (multipart)
+   └── NO enviar replyToUserId — ese campo es solo para el dueño
 
-3. Botón "Calificar" (solo visible para el dueño)
+3. Vista de comentarios según rol
+   └── Dueño: ve todos los comentarios de todos los usuarios
+   └── Comentarista: ve solo sus mensajes + respuestas del dueño hacia él
+       → Renderizar los comentarios del dueño con replyToUserId != null como "respuesta privada"
+
+4. Botón "Responder" (solo visible para el dueño, dentro de cada comentario)
+   └── POST /sightings/{id}/comments con replyToUserId = usuarioId del comentarista
+   └── El comentarista verá la respuesta en su próximo GET /comments
+
+5. Botón "Calificar" (solo visible para el dueño)
    └── Mostrar: checkbox "¿Fue útil?" + selector de 1-5 estrellas
    └── POST /sightings/{id}/rating (JSON)
    └── Puede editarse (el endpoint hace upsert)
 
-4. Notificaciones push recibidas
-   └── tipo: "nuevo_avistamiento"     → navegar a pantalla de avistamientos de la mascota
-   └── tipo: "comentario_avistamiento" → navegar al avistamiento específico (usar avistamientoId del data)
+6. Notificaciones push recibidas
+   └── tipo: "nuevo_avistamiento"      → navegar a pantalla de avistamientos de la mascota
+   └── tipo: "comentario_avistamiento" → navegar al avistamiento específico (avistamientoId en data)
 ```
 
 ---

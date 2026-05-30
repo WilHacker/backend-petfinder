@@ -23,6 +23,7 @@ type CommentRow = {
   comentario_id: string;
   avistamiento_id: string;
   autor_usuario_id: string | null;
+  reply_to_user_id: string | null;
   mensaje: string;
   foto_url: string | null;
   lat: number | null;
@@ -153,12 +154,17 @@ export class SightingsService {
     // Solo guardar GPS si hay foto (regla de privacidad)
     const tieneGps = fotoUrl !== null && dto.lat != null && dto.lng != null;
 
+    const replyToSql = dto.replyToUserId
+      ? Prisma.sql`${dto.replyToUserId}::uuid`
+      : Prisma.sql`NULL`;
+
     const [row] = await this.prisma.$queryRaw<Array<{ comentario_id: string }>>`
       INSERT INTO comentarios_avistamiento
-        (avistamiento_id, autor_usuario_id, mensaje, foto_url, ubicacion_gps)
+        (avistamiento_id, autor_usuario_id, reply_to_user_id, mensaje, foto_url, ubicacion_gps)
       VALUES (
         ${avistamientoId}::uuid,
         ${usuarioId}::uuid,
+        ${replyToSql},
         ${dto.mensaje},
         ${fotoUrl},
         ${tieneGps ? Prisma.sql`ST_SetSRID(ST_MakePoint(${dto.lng!}, ${dto.lat!}), 4326)` : Prisma.sql`NULL`}
@@ -184,17 +190,33 @@ export class SightingsService {
     return comment;
   }
 
-  async getComments(avistamientoId: string) {
+  async getComments(avistamientoId: string, usuarioId: string) {
     const avistamiento = await this.prisma.avistamiento.findUnique({
       where: { avistamientoId },
+      include: {
+        mascota: {
+          include: { propietarios: { include: { persona: { include: { usuario: true } } } } },
+        },
+      },
     });
     if (!avistamiento) throw new NotFoundException('Avistamiento no encontrado');
+
+    const esPropietario = avistamiento.mascota?.propietarios.some(
+      (p) => p.persona.usuario?.usuarioId === usuarioId,
+    );
+
+    // Propietario ve todo; comentarista solo ve su hilo bilateral con el dueño
+    const whereClause = esPropietario
+      ? Prisma.sql`c.avistamiento_id = ${avistamientoId}::uuid`
+      : Prisma.sql`c.avistamiento_id = ${avistamientoId}::uuid
+          AND (c.autor_usuario_id = ${usuarioId}::uuid OR c.reply_to_user_id = ${usuarioId}::uuid)`;
 
     const rows = await this.prisma.$queryRaw<CommentRow[]>`
       SELECT
         c.comentario_id,
         c.avistamiento_id,
         c.autor_usuario_id,
+        c.reply_to_user_id,
         c.mensaje,
         c.foto_url,
         CASE WHEN c.ubicacion_gps IS NOT NULL THEN ST_Y(c.ubicacion_gps::geometry) END AS lat,
@@ -206,7 +228,7 @@ export class SightingsService {
       FROM comentarios_avistamiento c
       LEFT JOIN usuarios u ON u.usuario_id = c.autor_usuario_id
       LEFT JOIN personas p ON p.persona_id = u.persona_id
-      WHERE c.avistamiento_id = ${avistamientoId}::uuid
+      WHERE ${whereClause}
       ORDER BY c.creado_el ASC
     `;
 
@@ -286,6 +308,7 @@ export class SightingsService {
         c.comentario_id,
         c.avistamiento_id,
         c.autor_usuario_id,
+        c.reply_to_user_id,
         c.mensaje,
         c.foto_url,
         CASE WHEN c.ubicacion_gps IS NOT NULL THEN ST_Y(c.ubicacion_gps::geometry) END AS lat,
@@ -337,6 +360,7 @@ export class SightingsService {
       comentarioId: r.comentario_id,
       avistamientoId: r.avistamiento_id,
       autorUsuarioId: r.autor_usuario_id,
+      replyToUserId: r.reply_to_user_id,
       mensaje: r.mensaje,
       fotoUrl: r.foto_url,
       lat: r.lat != null ? Number(r.lat) : null,
