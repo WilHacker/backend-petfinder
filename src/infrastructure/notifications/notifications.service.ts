@@ -166,6 +166,83 @@ export class NotificationsService implements OnModuleInit {
     }
   }
 
+  async sendSightingAlert(mascotaId: string): Promise<void> {
+    try {
+      if (!this.app) return;
+
+      const propietarios = await this.prisma.propietarioMascota.findMany({
+        where: { mascotaId, recibeAlertas: true },
+        include: {
+          mascota: { select: { nombre: true } },
+          persona: { include: { usuario: { select: { tokenFcm: true } } } },
+        },
+      });
+
+      const tokens = propietarios
+        .map((p) => p.persona.usuario?.tokenFcm)
+        .filter((t): t is string => !!t);
+
+      if (!tokens.length) return;
+
+      const mascotaNombre = propietarios[0]?.mascota.nombre ?? 'Tu mascota';
+
+      await admin.messaging().sendEachForMulticast({
+        tokens,
+        notification: {
+          title: `¡Vieron a ${mascotaNombre}!`,
+          body: 'Alguien reportó un avistamiento. Revísalo en la app.',
+        },
+        data: { mascotaId, tipo: 'nuevo_avistamiento' },
+      });
+
+      this.logger.log(
+        `Alerta de avistamiento enviada a ${tokens.length} dispositivo(s) — mascota: ${mascotaId}`,
+      );
+    } catch (err) {
+      this.logger.error(`sendSightingAlert falló (mascota ${mascotaId})`, err as Error);
+    }
+  }
+
+  async sendSightingCommentAlert(mascotaId: string, avistamientoId: string): Promise<void> {
+    try {
+      if (!this.app) return;
+
+      const propietarios = await this.prisma.propietarioMascota.findMany({
+        where: { mascotaId, recibeAlertas: true },
+        include: {
+          mascota: { select: { nombre: true } },
+          persona: { include: { usuario: { select: { tokenFcm: true } } } },
+        },
+      });
+
+      const tokens = propietarios
+        .map((p) => p.persona.usuario?.tokenFcm)
+        .filter((t): t is string => !!t);
+
+      if (!tokens.length) return;
+
+      const mascotaNombre = propietarios[0]?.mascota.nombre ?? 'Tu mascota';
+
+      await admin.messaging().sendEachForMulticast({
+        tokens,
+        notification: {
+          title: `Nuevo comentario sobre ${mascotaNombre}`,
+          body: 'Alguien dejó información adicional en un avistamiento.',
+        },
+        data: { mascotaId, avistamientoId, tipo: 'comentario_avistamiento' },
+      });
+
+      this.logger.log(
+        `Alerta de comentario enviada a ${tokens.length} dispositivo(s) — avistamiento: ${avistamientoId}`,
+      );
+    } catch (err) {
+      this.logger.error(
+        `sendSightingCommentAlert falló (avistamiento ${avistamientoId})`,
+        err as Error,
+      );
+    }
+  }
+
   async sendZoneAlert(mascotaId: string) {
     try {
       if (!this.app) return;

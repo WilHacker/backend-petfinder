@@ -171,4 +171,49 @@ export class RealtimeService {
     this.server.to(petRoom).emit('owner:added', payload);
     this.logger.debug(`[WS] owner:added → room ${petRoom}`);
   }
+
+  emitSightingNew(
+    mascotaId: string,
+    payload: {
+      avistamientoId: string;
+      lat: number;
+      lng: number;
+      fotoUrl: string | null;
+      mensaje: string | null;
+      fechaAvistamiento: Date;
+    },
+  ): void {
+    if (!this.server) return;
+    const room = `pet:${mascotaId}`;
+    this.server.to(room).emit('sighting:new', payload);
+    this.logger.debug(`[WS] sighting:new → room ${room}`);
+  }
+
+  emitSightingCommentNew(
+    mascotaId: string,
+    payload: {
+      comentarioId: string;
+      avistamientoId: string;
+      mensaje: string;
+      fotoUrl: string | null;
+      lat?: number;
+      lng?: number;
+      creadoEl: Date;
+    },
+  ): void {
+    if (!this.server) return;
+    const room = `pet:${mascotaId}`;
+    this.server.to(room).emit('sighting:comment-new', payload);
+    this.logger.debug(`[WS] sighting:comment-new → room ${room}`);
+  }
+
+  emitSightingRated(
+    mascotaId: string,
+    payload: { avistamientoId: string; confirmado: boolean; estrellas: number },
+  ): void {
+    if (!this.server) return;
+    const room = `pet:${mascotaId}`;
+    this.server.to(room).emit('sighting:rated', payload);
+    this.logger.debug(`[WS] sighting:rated → room ${room}`);
+  }
 }
