@@ -11,7 +11,6 @@ import { RealtimeService } from '../../infrastructure/realtime/realtime.service'
 import { CreateSightingDto } from './dto/create-sighting.dto';
 import { CreateThanksDto } from './dto/create-thanks.dto';
 import { CreateCommentDto } from './dto/create-comment.dto';
-import { CreateRatingDto } from './dto/create-rating.dto';
 import { Prisma } from '@prisma/client';
 
 type SightingRow = {
@@ -29,7 +28,7 @@ type CommentRow = {
   avistamiento_id: string;
   autor_usuario_id: string | null;
   reply_to_user_id: string | null;
-  mensaje: string;
+  mensaje: string | null;
   foto_url: string | null;
   lat: number | null;
   lng: number | null;
@@ -147,6 +146,10 @@ export class SightingsService {
     });
     if (!avistamiento) throw new NotFoundException('Avistamiento no encontrado');
 
+    if (!file && !dto.mensaje) {
+      throw new BadRequestException('Debes enviar al menos un mensaje o una foto');
+    }
+
     let fotoUrl: string | null = null;
     if (file) {
       const result = await this.cloudinary.uploadBuffer(
@@ -170,7 +173,7 @@ export class SightingsService {
         ${avistamientoId}::uuid,
         ${usuarioId}::uuid,
         ${replyToSql},
-        ${dto.mensaje},
+        ${dto.mensaje ?? null},
         ${fotoUrl},
         ${tieneGps ? Prisma.sql`ST_SetSRID(ST_MakePoint(${dto.lng!}, ${dto.lat!}), 4326)` : Prisma.sql`NULL`}
       )
@@ -238,110 +241,6 @@ export class SightingsService {
     `;
 
     return rows.map((r) => this.mapCommentRow(r));
-  }
-
-  async createRating(avistamientoId: string, usuarioId: string, dto: CreateRatingDto) {
-    const avistamiento = await this.prisma.avistamiento.findUnique({
-      where: { avistamientoId },
-      include: {
-        mascota: {
-          include: { propietarios: { include: { persona: { include: { usuario: true } } } } },
-        },
-      },
-    });
-    if (!avistamiento) throw new NotFoundException('Avistamiento no encontrado');
-
-    const esPropietario = avistamiento.mascota?.propietarios.some(
-      (p) => p.persona.usuario?.usuarioId === usuarioId,
-    );
-    if (!esPropietario)
-      throw new ForbiddenException('Solo el dueño puede calificar el avistamiento');
-
-    // Verificar que el rescatista haya comentado en este avistamiento
-    const participó = await this.prisma.comentarioAvistamiento.findFirst({
-      where: { avistamientoId, autorUsuarioId: dto.rescatistaUsuarioId },
-    });
-    if (!participó)
-      throw new BadRequestException(
-        'Solo puedes calificar a alguien que comentó en este avistamiento',
-      );
-
-    // Upsert de la calificación (un dueño califica una vez a cada rescatista por avistamiento)
-    const existente = await this.prisma.calificacionRescatista.findUnique({
-      where: {
-        avistamientoId_rescatistaUsuarioId: {
-          avistamientoId,
-          rescatistaUsuarioId: dto.rescatistaUsuarioId,
-        },
-      },
-    });
-
-    const rating = await this.prisma.calificacionRescatista.upsert({
-      where: {
-        avistamientoId_rescatistaUsuarioId: {
-          avistamientoId,
-          rescatistaUsuarioId: dto.rescatistaUsuarioId,
-        },
-      },
-      update: { estrellas: dto.estrellas, mensaje: dto.mensaje ?? null, autorUsuarioId: usuarioId },
-      create: {
-        avistamientoId,
-        autorUsuarioId: usuarioId,
-        rescatistaUsuarioId: dto.rescatistaUsuarioId,
-        estrellas: dto.estrellas,
-        mensaje: dto.mensaje ?? null,
-      },
-    });
-
-    // Recalcular reputación del rescatista
-    await this.recalcularReputacion(
-      dto.rescatistaUsuarioId,
-      existente?.estrellas ?? null,
-      dto.estrellas,
-    );
-
-    if (avistamiento.mascotaId) {
-      this.realtime.emitSightingRated(avistamiento.mascotaId, {
-        avistamientoId,
-        rescatistaUsuarioId: dto.rescatistaUsuarioId,
-        estrellas: dto.estrellas,
-      });
-    }
-
-    return rating;
-  }
-
-  async getSightingRatings(avistamientoId: string) {
-    const avistamiento = await this.prisma.avistamiento.findUnique({
-      where: { avistamientoId },
-    });
-    if (!avistamiento) throw new NotFoundException('Avistamiento no encontrado');
-
-    return this.prisma.calificacionRescatista.findMany({
-      where: { avistamientoId },
-      orderBy: { creadoEl: 'asc' },
-      select: {
-        calificacionId: true,
-        avistamientoId: true,
-        estrellas: true,
-        mensaje: true,
-        creadoEl: true,
-        rescatista: {
-          select: {
-            usuarioId: true,
-            persona: {
-              select: {
-                nombre: true,
-                apellidoPaterno: true,
-                fotoPerfilUrl: true,
-                reputacion: true,
-                totalCalificaciones: true,
-              },
-            },
-          },
-        },
-      },
-    });
   }
 
   // ─── threads / participations ─────────────────────────────────────────────
@@ -465,8 +364,6 @@ export class SightingsService {
       mi_ultimo_mensaje: string | null;
       ultima_respuesta: string | null;
       ultima_actividad: Date | null;
-      calificacion_estrellas: number | null;
-      calificacion_mensaje: string | null;
       no_leidos: bigint;
     };
 
@@ -505,8 +402,6 @@ export class SightingsService {
           (SELECT MAX(cr2.creado_el) FROM comentarios_avistamiento cr2
            WHERE cr2.avistamiento_id = a.avistamiento_id AND cr2.reply_to_user_id = ${usuarioId}::uuid)
         )                   AS ultima_actividad,
-        cal.estrellas       AS calificacion_estrellas,
-        cal.mensaje         AS calificacion_mensaje,
         (
           SELECT COUNT(*) FROM comentarios_avistamiento c_unread
           WHERE c_unread.avistamiento_id = a.avistamiento_id
@@ -527,9 +422,6 @@ export class SightingsService {
         ORDER BY CASE WHEN pm2.tipo_relacion::text = 'Dueño Principal' THEN 0 ELSE 1 END
         LIMIT 1
       ) dueno ON true
-      LEFT JOIN calificaciones_rescatista cal
-        ON cal.avistamiento_id = a.avistamiento_id
-       AND cal.rescatista_usuario_id = ${usuarioId}::uuid
       WHERE EXISTS (
         SELECT 1 FROM comentarios_avistamiento
         WHERE avistamiento_id = a.avistamiento_id
@@ -554,10 +446,6 @@ export class SightingsService {
       ultimaRespuesta: r.ultima_respuesta,
       ultimaActividad: r.ultima_actividad,
       noLeidos: Number(r.no_leidos ?? 0),
-      calificacion:
-        r.calificacion_estrellas !== null
-          ? { estrellas: r.calificacion_estrellas, mensaje: r.calificacion_mensaje }
-          : null,
     }));
   }
 
@@ -696,46 +584,5 @@ export class SightingsService {
       where: { personaId_mascotaId: { personaId, mascotaId } },
     });
     if (!rel) throw new ForbiddenException('No tienes acceso a esta mascota');
-  }
-
-  private async recalcularReputacion(
-    rescatistaUsuarioId: string,
-    estrellasAnteriores: number | null,
-    estrellasNuevas: number,
-  ) {
-    const usuario = await this.prisma.usuario.findUnique({
-      where: { usuarioId: rescatistaUsuarioId },
-      select: {
-        persona: { select: { personaId: true, reputacion: true, totalCalificaciones: true } },
-      },
-    });
-    if (!usuario?.persona) return;
-
-    const { personaId, reputacion, totalCalificaciones } = usuario.persona;
-    const repActual = Number(reputacion);
-
-    let nuevaRep: number;
-    let nuevoTotal: number;
-
-    if (estrellasAnteriores === null) {
-      // Nueva calificación
-      nuevoTotal = totalCalificaciones + 1;
-      nuevaRep = (repActual * totalCalificaciones + estrellasNuevas) / nuevoTotal;
-    } else {
-      // Edición: restar la anterior y sumar la nueva (total no cambia)
-      nuevoTotal = totalCalificaciones;
-      nuevaRep =
-        nuevoTotal > 0
-          ? (repActual * nuevoTotal - estrellasAnteriores + estrellasNuevas) / nuevoTotal
-          : estrellasNuevas;
-    }
-
-    await this.prisma.persona.update({
-      where: { personaId },
-      data: {
-        reputacion: Math.min(5, Math.max(0, parseFloat(nuevaRep.toFixed(2)))),
-        totalCalificaciones: nuevoTotal,
-      },
-    });
   }
 }

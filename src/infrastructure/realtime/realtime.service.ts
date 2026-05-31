@@ -194,7 +194,7 @@ export class RealtimeService {
     payload: {
       comentarioId: string;
       avistamientoId: string;
-      mensaje: string;
+      mensaje: string | null;
       fotoUrl: string | null;
       lat?: number;
       lng?: number;

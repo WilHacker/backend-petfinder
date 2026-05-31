@@ -1,12 +1,13 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import { IsNumber, IsOptional, IsString, IsUUID, Max, MaxLength, Min } from 'class-validator';
 
 export class CreateCommentDto {
-  @ApiProperty({ example: 'Lo vi cerca del parque central, estaba solo y asustado' })
+  @ApiPropertyOptional({ example: 'Lo vi cerca del parque central, estaba solo y asustado' })
+  @IsOptional()
   @IsString()
   @MaxLength(500)
-  mensaje!: string;
+  mensaje?: string;
 
   @ApiPropertyOptional({
     example: -17.3935,

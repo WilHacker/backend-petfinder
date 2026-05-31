@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, NotFoundException, BadRequestException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { CloudinaryService } from '../../cloudinary/cloudinary.service';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -58,10 +58,7 @@ const mockPrisma = {
   agradecimientoRescatista: { create: jest.fn(), findMany: jest.fn() },
   propietarioMascota: { findUnique: jest.fn() },
   comentarioAvistamiento: { findFirst: jest.fn() },
-  calificacionRescatista: { findUnique: jest.fn(), upsert: jest.fn(), findMany: jest.fn() },
   lecturaComentario: { upsert: jest.fn() },
-  usuario: { findUnique: jest.fn() },
-  persona: { update: jest.fn() },
   $queryRaw: jest.fn(),
 };
 
@@ -314,6 +311,12 @@ describe('SightingsService', () => {
       );
     });
 
+    it('lanza BadRequestException si no hay ni mensaje ni foto', async () => {
+      await expect(service.createComment(AVISTAMIENTO_ID, USUARIO_ID, {})).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
     it('lanza NotFoundException si el avistamiento no existe', async () => {
       mockPrisma.avistamiento.findUnique.mockResolvedValue(null);
 
@@ -351,101 +354,6 @@ describe('SightingsService', () => {
       mockPrisma.avistamiento.findUnique.mockResolvedValue(null);
 
       await expect(service.getComments('no-existe', USUARIO_ID)).rejects.toThrow(NotFoundException);
-    });
-  });
-
-  // ───────────────────────── createRating ──────────────────────
-
-  describe('createRating', () => {
-    const RESCATISTA_ID = 'rescatista-uuid';
-    const dto = { rescatistaUsuarioId: RESCATISTA_ID, estrellas: 5 };
-
-    beforeEach(() => {
-      mockPrisma.avistamiento.findUnique.mockResolvedValue(mockAvistamiento);
-      mockPrisma.comentarioAvistamiento.findFirst.mockResolvedValue({ comentarioId: 'c1' });
-      mockPrisma.calificacionRescatista.findUnique.mockResolvedValue(null);
-      mockPrisma.calificacionRescatista.upsert.mockResolvedValue({
-        calificacionId: 'cal-uuid',
-        avistamientoId: AVISTAMIENTO_ID,
-        rescatistaUsuarioId: RESCATISTA_ID,
-        estrellas: 5,
-      });
-      mockPrisma.usuario.findUnique.mockResolvedValue({
-        persona: { personaId: PERSONA_ID, reputacion: 0, totalCalificaciones: 0 },
-      });
-      mockPrisma.persona.update.mockResolvedValue({});
-    });
-
-    it('crea calificación como propietario y recalcula reputación', async () => {
-      const result = await service.createRating(AVISTAMIENTO_ID, USUARIO_ID, dto);
-
-      expect(result.estrellas).toBe(5);
-      expect(mockPrisma.calificacionRescatista.upsert).toHaveBeenCalled();
-      expect(mockPrisma.persona.update).toHaveBeenCalled();
-    });
-
-    it('emite sighting:rated tras calificar', async () => {
-      await service.createRating(AVISTAMIENTO_ID, USUARIO_ID, dto);
-
-      expect(mockRealtime.emitSightingRated).toHaveBeenCalledWith(
-        MASCOTA_ID,
-        expect.objectContaining({
-          avistamientoId: AVISTAMIENTO_ID,
-          estrellas: 5,
-          rescatistaUsuarioId: RESCATISTA_ID,
-        }),
-      );
-    });
-
-    it('lanza NotFoundException si el avistamiento no existe', async () => {
-      mockPrisma.avistamiento.findUnique.mockResolvedValue(null);
-
-      await expect(service.createRating('no-existe', USUARIO_ID, dto)).rejects.toThrow(
-        NotFoundException,
-      );
-    });
-
-    it('lanza ForbiddenException si el usuario no es propietario', async () => {
-      await expect(service.createRating(AVISTAMIENTO_ID, 'otro-usuario', dto)).rejects.toThrow(
-        ForbiddenException,
-      );
-    });
-
-    it('lanza BadRequestException si el rescatista no comentó en el avistamiento', async () => {
-      mockPrisma.comentarioAvistamiento.findFirst.mockResolvedValue(null);
-
-      await expect(service.createRating(AVISTAMIENTO_ID, USUARIO_ID, dto)).rejects.toThrow(
-        BadRequestException,
-      );
-    });
-  });
-
-  // ───────────────────────── getSightingRatings ─────────────────────────
-
-  describe('getSightingRatings', () => {
-    it('retorna lista de calificaciones del avistamiento', async () => {
-      mockPrisma.avistamiento.findUnique.mockResolvedValue({ avistamientoId: AVISTAMIENTO_ID });
-      mockPrisma.calificacionRescatista.findMany.mockResolvedValue([
-        {
-          calificacionId: 'cal-1',
-          avistamientoId: AVISTAMIENTO_ID,
-          estrellas: 5,
-          mensaje: null,
-          creadoEl: new Date(),
-          rescatista: null,
-        },
-      ]);
-
-      const result = await service.getSightingRatings(AVISTAMIENTO_ID);
-
-      expect(result).toHaveLength(1);
-      expect(result[0].estrellas).toBe(5);
-    });
-
-    it('lanza NotFoundException si el avistamiento no existe', async () => {
-      mockPrisma.avistamiento.findUnique.mockResolvedValue(null);
-
-      await expect(service.getSightingRatings('no-existe')).rejects.toThrow(NotFoundException);
     });
   });
 
@@ -540,8 +448,6 @@ describe('SightingsService', () => {
           mi_ultimo_mensaje: 'La vi cerca del parque',
           ultima_respuesta: '¿A qué hora fue?',
           ultima_actividad: new Date(),
-          calificacion_estrellas: 5,
-          calificacion_mensaje: 'Muy útil',
           no_leidos: BigInt(2),
         },
       ]);
@@ -550,33 +456,15 @@ describe('SightingsService', () => {
 
       expect(result).toHaveLength(1);
       expect(result[0].miUltimoMensaje).toBe('La vi cerca del parque');
-      expect(result[0].calificacion?.estrellas).toBe(5);
       expect(result[0].noLeidos).toBe(2);
     });
 
-    it('retorna calificacion null si aún no calificaron', async () => {
-      mockPrisma.$queryRaw.mockResolvedValue([
-        {
-          avistamiento_id: AVISTAMIENTO_ID,
-          mascota_id: MASCOTA_ID,
-          mascota_nombre: 'Max',
-          mascota_estado: 'extraviada',
-          mascota_foto_url: null,
-          dueno_nombre: 'Wilian',
-          dueno_foto_perfil_url: null,
-          mi_ultimo_mensaje: 'La vi cerca del parque',
-          ultima_respuesta: null,
-          ultima_actividad: new Date(),
-          calificacion_estrellas: null,
-          calificacion_mensaje: null,
-          no_leidos: BigInt(0),
-        },
-      ]);
+    it('retorna array vacío cuando el usuario no participó en ningún avistamiento', async () => {
+      mockPrisma.$queryRaw.mockResolvedValue([]);
 
       const result = await service.getMyParticipations(USUARIO_ID);
 
-      expect(result[0].calificacion).toBeNull();
-      expect(result[0].noLeidos).toBe(0);
+      expect(result).toHaveLength(0);
     });
   });
 

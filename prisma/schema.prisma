@@ -56,9 +56,6 @@ model Persona {
   fotoPerfilUrl        String?   @map("foto_perfil_url")
   fechaNacimiento      DateTime? @map("fecha_nacimiento") @db.Date
   creadoEl             DateTime? @default(now()) @map("creado_el") @db.Timestamptz
-  reputacion           Decimal   @default(0.00) @map("reputacion") @db.Decimal(3, 2)
-  totalCalificaciones  Int       @default(0) @map("total_calificaciones")
-
   // Relaciones
   usuario             Usuario?
   mediosContacto      MedioContacto[]
@@ -89,8 +86,6 @@ model Usuario {
   historialUbicaciones       HistorialUbicacion[]
   agradecimientos            AgradecimientoRescatista[]
   comentariosAvistamiento    ComentarioAvistamiento[]
-  calificacionesDadas        CalificacionRescatista[] @relation("CalificacionDada")
-  calificacionesRecibidas    CalificacionRescatista[] @relation("CalificacionRecibida")
   lecturasComentarios        LecturaComentario[]
 
   @@map("usuarios")
@@ -317,7 +312,6 @@ model Avistamiento {
   mascota         Mascota? @relation(fields: [mascotaId], references: [mascotaId], onDelete: Cascade)
   agradecimientos AgradecimientoRescatista[]
   comentarios     ComentarioAvistamiento[]
-  calificaciones  CalificacionRescatista[]
   lecturas        LecturaComentario[]
 
   @@map("avistamientos")
@@ -341,7 +335,7 @@ model ComentarioAvistamiento {
   avistamientoId  String    @map("avistamiento_id") @db.Uuid
   autorUsuarioId  String?   @map("autor_usuario_id") @db.Uuid
   replyToUserId   String?   @map("reply_to_user_id") @db.Uuid
-  mensaje         String
+  mensaje         String?
   fotoUrl         String?   @map("foto_url")
   ubicacionGps    Unsupported("geometry(Point, 4326)")? @map("ubicacion_gps")
   creadoEl        DateTime? @default(now()) @map("creado_el") @db.Timestamptz
@@ -350,23 +344,6 @@ model ComentarioAvistamiento {
   autor        Usuario?     @relation(fields: [autorUsuarioId], references: [usuarioId], onDelete: SetNull)
 
   @@map("comentarios_avistamiento")
-}
-
-model CalificacionRescatista {
-  calificacionId       String    @id @default(dbgenerated("uuid_generate_v4()")) @map("calificacion_id") @db.Uuid
-  avistamientoId       String    @map("avistamiento_id") @db.Uuid
-  autorUsuarioId       String?   @map("autor_usuario_id") @db.Uuid
-  rescatistaUsuarioId  String?   @map("rescatista_usuario_id") @db.Uuid
-  estrellas            Int
-  mensaje              String?
-  creadoEl             DateTime? @default(now()) @map("creado_el") @db.Timestamptz
-
-  avistamiento Avistamiento @relation(fields: [avistamientoId], references: [avistamientoId], onDelete: Cascade)
-  autor        Usuario?     @relation("CalificacionDada", fields: [autorUsuarioId], references: [usuarioId], onDelete: SetNull)
-  rescatista   Usuario?     @relation("CalificacionRecibida", fields: [rescatistaUsuarioId], references: [usuarioId], onDelete: SetNull)
-
-  @@unique([avistamientoId, rescatistaUsuarioId])
-  @@map("calificaciones_rescatista")
 }
 
 model LecturaComentario {

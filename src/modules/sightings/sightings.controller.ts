@@ -20,7 +20,6 @@ import { SightingsService } from './sightings.service';
 import { CreateSightingDto } from './dto/create-sighting.dto';
 import { CreateThanksDto } from './dto/create-thanks.dto';
 import { CreateCommentDto } from './dto/create-comment.dto';
-import { CreateRatingDto } from './dto/create-rating.dto';
 
 @ApiTags('Sightings')
 @ApiBearerAuth()
@@ -151,7 +150,6 @@ export class SightingsController {
   @ApiBody({
     schema: {
       type: 'object',
-      required: ['mensaje'],
       properties: {
         mensaje: { type: 'string', example: 'Lo vi cerca del parque central, estaba solo' },
         lat: {
@@ -198,34 +196,5 @@ export class SightingsController {
     @CurrentUser('sub') usuarioId: string,
   ) {
     return this.sightingsService.getComments(avistamientoId, usuarioId);
-  }
-
-  @Post(':id/rating')
-  @ApiOperation({
-    summary: 'Calificar a un rescatista (solo dueño)',
-    description:
-      'El dueño califica a un comentarista específico con 1–5 estrellas y un mensaje opcional. ' +
-      'Solo se puede calificar a alguien que haya comentado en el avistamiento. ' +
-      'Si ya calificó a ese rescatista, actualiza la calificación (upsert). ' +
-      'La reputación del rescatista se recalcula automáticamente. ' +
-      'Emite evento WebSocket sighting:rated.',
-  })
-  createRating(
-    @Param('id', ParseUUIDPipe) avistamientoId: string,
-    @CurrentUser('sub') usuarioId: string,
-    @Body() dto: CreateRatingDto,
-  ) {
-    return this.sightingsService.createRating(avistamientoId, usuarioId, dto);
-  }
-
-  @Get(':id/ratings')
-  @Public()
-  @ApiOperation({
-    summary: 'Ver calificaciones de un avistamiento',
-    description:
-      'Público. Lista todas las calificaciones que el dueño dio en este avistamiento, con el perfil y reputación de cada rescatista.',
-  })
-  getSightingRatings(@Param('id', ParseUUIDPipe) avistamientoId: string) {
-    return this.sightingsService.getSightingRatings(avistamientoId);
   }
 }
