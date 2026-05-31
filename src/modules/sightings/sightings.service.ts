@@ -1,4 +1,9 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CloudinaryService } from '../../cloudinary/cloudinary.service';
 import { NotificationsService } from '../../infrastructure/notifications/notifications.service';
@@ -252,21 +257,53 @@ export class SightingsService {
     if (!esPropietario)
       throw new ForbiddenException('Solo el dueño puede calificar el avistamiento');
 
-    const rating = await this.prisma.calificacionAvistamiento.upsert({
-      where: { avistamientoId },
-      update: { confirmado: dto.confirmado, estrellas: dto.estrellas, autorUsuarioId: usuarioId },
+    // Verificar que el rescatista haya comentado en este avistamiento
+    const participó = await this.prisma.comentarioAvistamiento.findFirst({
+      where: { avistamientoId, autorUsuarioId: dto.rescatistaUsuarioId },
+    });
+    if (!participó)
+      throw new BadRequestException(
+        'Solo puedes calificar a alguien que comentó en este avistamiento',
+      );
+
+    // Upsert de la calificación (un dueño califica una vez a cada rescatista por avistamiento)
+    const existente = await this.prisma.calificacionRescatista.findUnique({
+      where: {
+        avistamientoId_rescatistaUsuarioId: {
+          avistamientoId,
+          rescatistaUsuarioId: dto.rescatistaUsuarioId,
+        },
+      },
+    });
+
+    const rating = await this.prisma.calificacionRescatista.upsert({
+      where: {
+        avistamientoId_rescatistaUsuarioId: {
+          avistamientoId,
+          rescatistaUsuarioId: dto.rescatistaUsuarioId,
+        },
+      },
+      update: { estrellas: dto.estrellas, mensaje: dto.mensaje ?? null, autorUsuarioId: usuarioId },
       create: {
         avistamientoId,
         autorUsuarioId: usuarioId,
-        confirmado: dto.confirmado,
+        rescatistaUsuarioId: dto.rescatistaUsuarioId,
         estrellas: dto.estrellas,
+        mensaje: dto.mensaje ?? null,
       },
     });
+
+    // Recalcular reputación del rescatista
+    await this.recalcularReputacion(
+      dto.rescatistaUsuarioId,
+      existente?.estrellas ?? null,
+      dto.estrellas,
+    );
 
     if (avistamiento.mascotaId) {
       this.realtime.emitSightingRated(avistamiento.mascotaId, {
         avistamientoId,
-        confirmado: dto.confirmado,
+        rescatistaUsuarioId: dto.rescatistaUsuarioId,
         estrellas: dto.estrellas,
       });
     }
@@ -274,13 +311,291 @@ export class SightingsService {
     return rating;
   }
 
-  async getRating(avistamientoId: string) {
+  async getSightingRatings(avistamientoId: string) {
     const avistamiento = await this.prisma.avistamiento.findUnique({
       where: { avistamientoId },
     });
     if (!avistamiento) throw new NotFoundException('Avistamiento no encontrado');
 
-    return this.prisma.calificacionAvistamiento.findUnique({ where: { avistamientoId } });
+    return this.prisma.calificacionRescatista.findMany({
+      where: { avistamientoId },
+      orderBy: { creadoEl: 'asc' },
+      select: {
+        calificacionId: true,
+        avistamientoId: true,
+        estrellas: true,
+        mensaje: true,
+        creadoEl: true,
+        rescatista: {
+          select: {
+            usuarioId: true,
+            persona: {
+              select: {
+                nombre: true,
+                apellidoPaterno: true,
+                fotoPerfilUrl: true,
+                reputacion: true,
+                totalCalificaciones: true,
+              },
+            },
+          },
+        },
+      },
+    });
+  }
+
+  // ─── threads / participations ─────────────────────────────────────────────
+
+  async markAsRead(avistamientoId: string, usuarioId: string) {
+    const avistamiento = await this.prisma.avistamiento.findUnique({ where: { avistamientoId } });
+    if (!avistamiento) throw new NotFoundException('Avistamiento no encontrado');
+
+    await this.prisma.lecturaComentario.upsert({
+      where: { usuarioId_avistamientoId: { usuarioId, avistamientoId } },
+      update: { leidoHastaEl: new Date() },
+      create: { usuarioId, avistamientoId, leidoHastaEl: new Date() },
+    });
+
+    return { ok: true };
+  }
+
+  async getMyPetsThreads(usuarioId: string) {
+    type Row = {
+      mascota_id: string;
+      mascota_nombre: string;
+      mascota_estado: string | null;
+      mascota_foto_url: string | null;
+      avistamiento_id: string | null;
+      fecha_avistamiento: Date | null;
+      total_hilos: bigint | null;
+      ultima_actividad: Date | null;
+      ultimo_mensaje: string | null;
+      no_leidos: bigint | null;
+    };
+
+    const rows = await this.prisma.$queryRaw<Row[]>`
+      SELECT
+        m.mascota_id::text,
+        m.nombre          AS mascota_nombre,
+        m.estado::text    AS mascota_estado,
+        (
+          SELECT foto_url FROM fotos_mascota
+          WHERE mascota_id = m.mascota_id AND es_principal = true
+          LIMIT 1
+        )                 AS mascota_foto_url,
+        la.avistamiento_id::text,
+        la.fecha_avistamiento,
+        la.total_hilos,
+        la.ultima_actividad,
+        la.ultimo_mensaje,
+        la.no_leidos
+      FROM mascotas m
+      JOIN propietarios_mascota pm ON pm.mascota_id = m.mascota_id
+      JOIN personas p              ON p.persona_id  = pm.persona_id
+      JOIN usuarios u              ON u.persona_id  = p.persona_id
+      LEFT JOIN LATERAL (
+        SELECT
+          a.avistamiento_id,
+          a.fecha_avistamiento,
+          COUNT(DISTINCT
+            CASE
+              WHEN c.reply_to_user_id IS NULL
+               AND c.autor_usuario_id != ${usuarioId}::uuid
+              THEN c.autor_usuario_id
+            END
+          )                AS total_hilos,
+          MAX(c.creado_el) AS ultima_actividad,
+          (
+            SELECT cm.mensaje
+            FROM comentarios_avistamiento cm
+            WHERE cm.avistamiento_id = a.avistamiento_id
+            ORDER BY cm.creado_el DESC
+            LIMIT 1
+          )                AS ultimo_mensaje,
+          (
+            SELECT COUNT(*) FROM comentarios_avistamiento c_unread
+            WHERE c_unread.avistamiento_id = a.avistamiento_id
+              AND c_unread.autor_usuario_id != ${usuarioId}::uuid
+              AND c_unread.creado_el > COALESCE(
+                (SELECT leido_hasta_el FROM lecturas_comentarios
+                 WHERE usuario_id = ${usuarioId}::uuid AND avistamiento_id = a.avistamiento_id),
+                '1970-01-01'::timestamptz
+              )
+          )                AS no_leidos
+        FROM avistamientos a
+        LEFT JOIN comentarios_avistamiento c ON c.avistamiento_id = a.avistamiento_id
+        WHERE a.mascota_id = m.mascota_id
+        GROUP BY a.avistamiento_id, a.fecha_avistamiento
+        ORDER BY MAX(c.creado_el) DESC NULLS LAST
+        LIMIT 1
+      ) la ON true
+      WHERE u.usuario_id = ${usuarioId}::uuid
+      ORDER BY la.ultima_actividad DESC NULLS LAST
+    `;
+
+    return rows.map((r) => ({
+      mascota: {
+        mascotaId: r.mascota_id,
+        nombre: r.mascota_nombre,
+        estado: r.mascota_estado,
+        fotoUrl: r.mascota_foto_url,
+      },
+      avistamiento: r.avistamiento_id
+        ? {
+            avistamientoId: r.avistamiento_id,
+            fechaAvistamiento: r.fecha_avistamiento,
+            totalHilos: Number(r.total_hilos ?? 0),
+            ultimaActividad: r.ultima_actividad,
+            ultimoMensaje: r.ultimo_mensaje,
+            noLeidos: Number(r.no_leidos ?? 0),
+          }
+        : null,
+    }));
+  }
+
+  async getMyParticipations(usuarioId: string) {
+    type Row = {
+      avistamiento_id: string;
+      mascota_id: string;
+      mascota_nombre: string;
+      mascota_estado: string | null;
+      mascota_foto_url: string | null;
+      dueno_nombre: string | null;
+      dueno_foto_perfil_url: string | null;
+      mi_ultimo_mensaje: string | null;
+      ultima_respuesta: string | null;
+      ultima_actividad: Date | null;
+      calificacion_estrellas: number | null;
+      calificacion_mensaje: string | null;
+      no_leidos: bigint;
+    };
+
+    const rows = await this.prisma.$queryRaw<Row[]>`
+      SELECT
+        a.avistamiento_id::text,
+        m.mascota_id::text,
+        m.nombre            AS mascota_nombre,
+        m.estado::text      AS mascota_estado,
+        (
+          SELECT foto_url FROM fotos_mascota
+          WHERE mascota_id = m.mascota_id AND es_principal = true
+          LIMIT 1
+        )                   AS mascota_foto_url,
+        dueno.nombre        AS dueno_nombre,
+        dueno.foto_perfil_url AS dueno_foto_perfil_url,
+        (
+          SELECT cm.mensaje
+          FROM comentarios_avistamiento cm
+          WHERE cm.avistamiento_id = a.avistamiento_id
+            AND cm.autor_usuario_id = ${usuarioId}::uuid
+          ORDER BY cm.creado_el DESC
+          LIMIT 1
+        )                   AS mi_ultimo_mensaje,
+        (
+          SELECT cr.mensaje
+          FROM comentarios_avistamiento cr
+          WHERE cr.avistamiento_id = a.avistamiento_id
+            AND cr.reply_to_user_id = ${usuarioId}::uuid
+          ORDER BY cr.creado_el DESC
+          LIMIT 1
+        )                   AS ultima_respuesta,
+        GREATEST(
+          (SELECT MAX(cm2.creado_el) FROM comentarios_avistamiento cm2
+           WHERE cm2.avistamiento_id = a.avistamiento_id AND cm2.autor_usuario_id = ${usuarioId}::uuid),
+          (SELECT MAX(cr2.creado_el) FROM comentarios_avistamiento cr2
+           WHERE cr2.avistamiento_id = a.avistamiento_id AND cr2.reply_to_user_id = ${usuarioId}::uuid)
+        )                   AS ultima_actividad,
+        cal.estrellas       AS calificacion_estrellas,
+        cal.mensaje         AS calificacion_mensaje,
+        (
+          SELECT COUNT(*) FROM comentarios_avistamiento c_unread
+          WHERE c_unread.avistamiento_id = a.avistamiento_id
+            AND c_unread.reply_to_user_id = ${usuarioId}::uuid
+            AND c_unread.creado_el > COALESCE(
+              (SELECT leido_hasta_el FROM lecturas_comentarios
+               WHERE usuario_id = ${usuarioId}::uuid AND avistamiento_id = a.avistamiento_id),
+              '1970-01-01'::timestamptz
+            )
+        )                   AS no_leidos
+      FROM avistamientos a
+      JOIN mascotas m ON m.mascota_id = a.mascota_id
+      LEFT JOIN LATERAL (
+        SELECT p2.nombre, p2.foto_perfil_url
+        FROM propietarios_mascota pm2
+        JOIN personas p2 ON p2.persona_id = pm2.persona_id
+        WHERE pm2.mascota_id = m.mascota_id
+        ORDER BY CASE WHEN pm2.tipo_relacion::text = 'Dueño Principal' THEN 0 ELSE 1 END
+        LIMIT 1
+      ) dueno ON true
+      LEFT JOIN calificaciones_rescatista cal
+        ON cal.avistamiento_id = a.avistamiento_id
+       AND cal.rescatista_usuario_id = ${usuarioId}::uuid
+      WHERE EXISTS (
+        SELECT 1 FROM comentarios_avistamiento
+        WHERE avistamiento_id = a.avistamiento_id
+          AND autor_usuario_id = ${usuarioId}::uuid
+      )
+      ORDER BY ultima_actividad DESC NULLS LAST
+    `;
+
+    return rows.map((r) => ({
+      avistamientoId: r.avistamiento_id,
+      mascota: {
+        mascotaId: r.mascota_id,
+        nombre: r.mascota_nombre,
+        estado: r.mascota_estado,
+        fotoUrl: r.mascota_foto_url,
+      },
+      dueno: {
+        nombre: r.dueno_nombre,
+        fotoPerfilUrl: r.dueno_foto_perfil_url,
+      },
+      miUltimoMensaje: r.mi_ultimo_mensaje,
+      ultimaRespuesta: r.ultima_respuesta,
+      ultimaActividad: r.ultima_actividad,
+      noLeidos: Number(r.no_leidos ?? 0),
+      calificacion:
+        r.calificacion_estrellas !== null
+          ? { estrellas: r.calificacion_estrellas, mensaje: r.calificacion_mensaje }
+          : null,
+    }));
+  }
+
+  async getUnreadCount(usuarioId: string) {
+    const [dueno] = await this.prisma.$queryRaw<[{ count: bigint }]>`
+      SELECT COUNT(*) AS count
+      FROM comentarios_avistamiento c
+      JOIN avistamientos a ON a.avistamiento_id = c.avistamiento_id
+      JOIN mascotas m      ON m.mascota_id = a.mascota_id
+      JOIN propietarios_mascota pm ON pm.mascota_id = m.mascota_id
+      JOIN personas p      ON p.persona_id = pm.persona_id
+      JOIN usuarios u      ON u.persona_id = p.persona_id
+      WHERE u.usuario_id = ${usuarioId}::uuid
+        AND c.autor_usuario_id != ${usuarioId}::uuid
+        AND c.creado_el > COALESCE(
+          (SELECT lc.leido_hasta_el FROM lecturas_comentarios lc
+           WHERE lc.usuario_id = ${usuarioId}::uuid
+             AND lc.avistamiento_id = a.avistamiento_id),
+          '1970-01-01'::timestamptz
+        )
+    `;
+
+    const [rescatista] = await this.prisma.$queryRaw<[{ count: bigint }]>`
+      SELECT COUNT(*) AS count
+      FROM comentarios_avistamiento c
+      WHERE c.reply_to_user_id = ${usuarioId}::uuid
+        AND c.creado_el > COALESCE(
+          (SELECT lc.leido_hasta_el FROM lecturas_comentarios lc
+           WHERE lc.usuario_id = ${usuarioId}::uuid
+             AND lc.avistamiento_id = c.avistamiento_id),
+          '1970-01-01'::timestamptz
+        )
+    `;
+
+    const comoDueno = Number(dueno.count);
+    const comoRescatista = Number(rescatista.count);
+
+    return { total: comoDueno + comoRescatista, comoDueno, comoRescatista };
   }
 
   // ─── helpers ──────────────────────────────────────────────────────────────
@@ -381,5 +696,46 @@ export class SightingsService {
       where: { personaId_mascotaId: { personaId, mascotaId } },
     });
     if (!rel) throw new ForbiddenException('No tienes acceso a esta mascota');
+  }
+
+  private async recalcularReputacion(
+    rescatistaUsuarioId: string,
+    estrellasAnteriores: number | null,
+    estrellasNuevas: number,
+  ) {
+    const usuario = await this.prisma.usuario.findUnique({
+      where: { usuarioId: rescatistaUsuarioId },
+      select: {
+        persona: { select: { personaId: true, reputacion: true, totalCalificaciones: true } },
+      },
+    });
+    if (!usuario?.persona) return;
+
+    const { personaId, reputacion, totalCalificaciones } = usuario.persona;
+    const repActual = Number(reputacion);
+
+    let nuevaRep: number;
+    let nuevoTotal: number;
+
+    if (estrellasAnteriores === null) {
+      // Nueva calificación
+      nuevoTotal = totalCalificaciones + 1;
+      nuevaRep = (repActual * totalCalificaciones + estrellasNuevas) / nuevoTotal;
+    } else {
+      // Edición: restar la anterior y sumar la nueva (total no cambia)
+      nuevoTotal = totalCalificaciones;
+      nuevaRep =
+        nuevoTotal > 0
+          ? (repActual * nuevoTotal - estrellasAnteriores + estrellasNuevas) / nuevoTotal
+          : estrellasNuevas;
+    }
+
+    await this.prisma.persona.update({
+      where: { personaId },
+      data: {
+        reputacion: Math.min(5, Math.max(0, parseFloat(nuevaRep.toFixed(2)))),
+        totalCalificaciones: nuevoTotal,
+      },
+    });
   }
 }

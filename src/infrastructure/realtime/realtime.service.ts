@@ -209,7 +209,7 @@ export class RealtimeService {
 
   emitSightingRated(
     mascotaId: string,
-    payload: { avistamientoId: string; confirmado: boolean; estrellas: number },
+    payload: { avistamientoId: string; rescatistaUsuarioId: string; estrellas: number },
   ): void {
     if (!this.server) return;
     const room = `pet:${mascotaId}`;

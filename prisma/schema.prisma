@@ -48,14 +48,16 @@ enum RolUsuario {
 // =============================================================================
 
 model Persona {
-  personaId         String    @id @default(dbgenerated("uuid_generate_v4()")) @map("persona_id") @db.Uuid
-  nombre            String    @db.VarChar(100)
-  apellidoPaterno   String    @map("apellido_paterno") @db.VarChar(100)
-  apellidoMaterno   String?   @map("apellido_materno") @db.VarChar(100)
-  ci                String?   @unique @db.VarChar(20)
-  fotoPerfilUrl     String?   @map("foto_perfil_url")
-  fechaNacimiento   DateTime? @map("fecha_nacimiento") @db.Date
-  creadoEl          DateTime? @default(now()) @map("creado_el") @db.Timestamptz
+  personaId            String    @id @default(dbgenerated("uuid_generate_v4()")) @map("persona_id") @db.Uuid
+  nombre               String    @db.VarChar(100)
+  apellidoPaterno      String    @map("apellido_paterno") @db.VarChar(100)
+  apellidoMaterno      String?   @map("apellido_materno") @db.VarChar(100)
+  ci                   String?   @unique @db.VarChar(20)
+  fotoPerfilUrl        String?   @map("foto_perfil_url")
+  fechaNacimiento      DateTime? @map("fecha_nacimiento") @db.Date
+  creadoEl             DateTime? @default(now()) @map("creado_el") @db.Timestamptz
+  reputacion           Decimal   @default(0.00) @map("reputacion") @db.Decimal(3, 2)
+  totalCalificaciones  Int       @default(0) @map("total_calificaciones")
 
   // Relaciones
   usuario             Usuario?
@@ -87,7 +89,9 @@ model Usuario {
   historialUbicaciones       HistorialUbicacion[]
   agradecimientos            AgradecimientoRescatista[]
   comentariosAvistamiento    ComentarioAvistamiento[]
-  calificacionesAvistamiento CalificacionAvistamiento[]
+  calificacionesDadas        CalificacionRescatista[] @relation("CalificacionDada")
+  calificacionesRecibidas    CalificacionRescatista[] @relation("CalificacionRecibida")
+  lecturasComentarios        LecturaComentario[]
 
   @@map("usuarios")
 }
@@ -313,7 +317,8 @@ model Avistamiento {
   mascota         Mascota? @relation(fields: [mascotaId], references: [mascotaId], onDelete: Cascade)
   agradecimientos AgradecimientoRescatista[]
   comentarios     ComentarioAvistamiento[]
-  calificacion    CalificacionAvistamiento?
+  calificaciones  CalificacionRescatista[]
+  lecturas        LecturaComentario[]
 
   @@map("avistamientos")
 }
@@ -347,15 +352,31 @@ model ComentarioAvistamiento {
   @@map("comentarios_avistamiento")
 }
 
-model CalificacionAvistamiento {
-  avistamientoId String    @id @map("avistamiento_id") @db.Uuid
-  autorUsuarioId String?   @map("autor_usuario_id") @db.Uuid
-  confirmado     Boolean
-  estrellas      Int
-  creadoEl       DateTime? @default(now()) @map("creado_el") @db.Timestamptz
+model CalificacionRescatista {
+  calificacionId       String    @id @default(dbgenerated("uuid_generate_v4()")) @map("calificacion_id") @db.Uuid
+  avistamientoId       String    @map("avistamiento_id") @db.Uuid
+  autorUsuarioId       String?   @map("autor_usuario_id") @db.Uuid
+  rescatistaUsuarioId  String?   @map("rescatista_usuario_id") @db.Uuid
+  estrellas            Int
+  mensaje              String?
+  creadoEl             DateTime? @default(now()) @map("creado_el") @db.Timestamptz
 
   avistamiento Avistamiento @relation(fields: [avistamientoId], references: [avistamientoId], onDelete: Cascade)
-  autor        Usuario?     @relation(fields: [autorUsuarioId], references: [usuarioId], onDelete: SetNull)
+  autor        Usuario?     @relation("CalificacionDada", fields: [autorUsuarioId], references: [usuarioId], onDelete: SetNull)
+  rescatista   Usuario?     @relation("CalificacionRecibida", fields: [rescatistaUsuarioId], references: [usuarioId], onDelete: SetNull)
 
-  @@map("calificaciones_avistamiento")
+  @@unique([avistamientoId, rescatistaUsuarioId])
+  @@map("calificaciones_rescatista")
+}
+
+model LecturaComentario {
+  usuarioId      String   @map("usuario_id") @db.Uuid
+  avistamientoId String   @map("avistamiento_id") @db.Uuid
+  leidoHastaEl   DateTime @map("leido_hasta_el") @db.Timestamptz
+
+  usuario      Usuario      @relation(fields: [usuarioId], references: [usuarioId], onDelete: Cascade)
+  avistamiento Avistamiento @relation(fields: [avistamientoId], references: [avistamientoId], onDelete: Cascade)
+
+  @@id([usuarioId, avistamientoId])
+  @@map("lecturas_comentarios")
 }

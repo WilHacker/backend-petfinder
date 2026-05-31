@@ -1,461 +1,668 @@
-# Avistamientos — Comentarios, Calificaciones y Notificaciones
+# Avistamientos — Sistema Completo de Chat, Calificaciones y Reputación
 
-> **Sprint:** Mayo 2026 — Funcionalidad nueva  
-> **Base URL:** `http://localhost:3000` (dev) — reemplazar por la URL de producción  
-> **Swagger interactivo:** `GET /api/docs` → sección **Sightings**
-
----
-
-## Contexto
-
-Cuando alguien reporta un avistamiento (`POST /sightings/pets/:petId`), ahora:
-
-1. El dueño recibe **push FCM** y un **evento WebSocket** en tiempo real.
-2. Cualquier usuario autenticado puede **comentar** el avistamiento con información adicional.
-3. El dueño puede **calificar** el avistamiento: confirmar si fue verídico y puntuar al rescatista (1–5 ⭐).
-
-### Regla de privacidad en comentarios
-
-Un comentarista puede haber visto la mascota a las 2 pm y reportarlo a las 8 pm desde su casa. Si se fuerza a enviar la ubicación siempre, se estaría revelando dónde vive.
-
-**Regla:** `lat/lng` **solo se guarda si el comentario incluye foto**. Sin foto, las coordenadas se descartan aunque se envíen.
+> **Última actualización:** Mayo 2026  
+> **Base URL:** `http://localhost:3000` (dev) — reemplazar por URL de producción  
+> **Swagger:** `GET /api/docs` → sección **Sightings**
 
 ---
 
-## Endpoints nuevos
+## Cambios respecto a la versión anterior
 
-### Resumen rápido
-
-| Método | Ruta | Auth | Descripción |
-|--------|------|------|-------------|
-| `POST` | `/sightings/pets/:petId` | ❌ Público | Crear avistamiento *(ya existía — ahora notifica)* |
-| `POST` | `/sightings/:id/comments` | ✅ JWT | Comentar un avistamiento |
-| `GET` | `/sightings/:id/comments` | ✅ JWT | Ver comentarios (filtrado por rol) |
-| `POST` | `/sightings/:id/rating` | ✅ JWT | Calificar avistamiento (solo dueño) |
-| `GET` | `/sightings/:id/rating` | ❌ Público | Ver calificación |
+| Estado | Endpoint | Detalle |
+|--------|----------|---------|
+| ✅ Sin cambios | `POST /sightings/pets/:petId` | Igual, ahora también notifica |
+| ✅ Sin cambios | `GET /sightings/pets/:petId` | Igual |
+| ✅ Actualizado | `POST /sightings/:id/comments` | Ahora acepta `replyToUserId` |
+| ✅ Actualizado | `GET /sightings/:id/comments` | Ahora requiere JWT, filtra por rol |
+| 🔄 Reemplazado | `POST /sightings/:id/rating` | Body cambia completamente — ver abajo |
+| ❌ Eliminado | `GET /sightings/:id/rating` | Reemplazado por el de abajo |
+| 🆕 Nuevo | `GET /sightings/:id/ratings` | Plural, devuelve array con reputación |
+| 🆕 Nuevo | `PUT /sightings/:id/read` | Marca hilo como leído |
+| 🆕 Nuevo | `GET /sightings/my-pets/threads` | Lista del dueño (pestaña "Mis mascotas") |
+| 🆕 Nuevo | `GET /sightings/my-participations` | Lista del rescatista (pestaña "Ayudé") |
+| 🆕 Nuevo | `GET /sightings/unread-count` | Badge del navbar |
+| ✅ Actualizado | `GET /users/me` | Ahora incluye `reputacion` y `totalCalificaciones` |
+| ✅ Actualizado | `GET /users/:personaId/card` | Ahora incluye `reputacion` y `totalCalificaciones` |
 
 ---
 
-## 1. Crear avistamiento *(comportamiento actualizado)*
+## Índice
 
-> Ya existía. Se documenta aquí porque ahora dispara notificaciones.
+1. [Cómo funciona el sistema completo](#1-cómo-funciona-el-sistema-completo)
+2. [Regla de privacidad GPS](#2-regla-de-privacidad-gps)
+3. [Sistema de hilos bilaterales](#3-sistema-de-hilos-bilaterales)
+4. [Sistema de no leídos](#4-sistema-de-no-leídos)
+5. [Sistema de reputación](#5-sistema-de-reputación)
+6. [Endpoints — referencia completa](#6-endpoints--referencia-completa)
+7. [Eventos en tiempo real](#7-eventos-en-tiempo-real)
+8. [Flujo recomendado Android](#8-flujo-recomendado-android)
+
+---
+
+## 1. Cómo funciona el sistema completo
 
 ```
-POST /sightings/pets/:petId
+1. Alguien ve la mascota en la calle
+       ↓
+2. Reporta avistamiento (sin cuenta)
+   POST /sightings/pets/{petId}
+       ↓
+3. El dueño recibe push FCM + evento WebSocket sighting:new
+       ↓
+4. El dueño abre la pantalla de conversaciones
+   GET /sightings/my-pets/threads   → ve sus mascotas con actividad
+       ↓
+5. El rescatista (u otro usuario) comenta con más info
+   POST /sightings/{id}/comments
+       ↓
+6. El dueño recibe push FCM + WebSocket sighting:comment-new
+   → badge del navbar sube automáticamente (noLeidos + 1)
+       ↓
+7. El dueño abre el hilo y le responde en privado
+   PUT /sightings/{id}/read          ← marca como leído (badge baja a 0)
+   POST /sightings/{id}/comments     con replyToUserId
+       ↓
+8. Acuerdan el punto de entrega
+       ↓
+9. Dueño califica al rescatista (opcional, como Google Play)
+   POST /sightings/{id}/rating
+       ↓
+10. Reputación del rescatista sube y es visible en su perfil público
+```
+
+**Reglas de diseño:**
+- Reportar avistamiento → **no requiere cuenta**
+- Comentar → **requiere cuenta** (para hilos privados y reputación)
+- Calificar → **opcional**, solo el dueño, solo a quien comentó
+- No leídos → **server-side** (funciona en múltiples dispositivos)
+
+---
+
+## 2. Regla de privacidad GPS
+
+**El problema:** Alguien ve la mascota a las 2 pm, llega a su casa y lo reporta a las 8 pm. Si se guarda su ubicación en ese momento, se expone dónde vive.
+
+**La regla:** `lat/lng` en comentarios **solo se guarda si el comentario incluye foto**. Con foto, el usuario estaba físicamente ahí cuando la sacó. Sin foto, las coordenadas se descartan aunque se envíen.
+
+```
+¿Comentario incluye foto?
+    Sí → guardar lat + lng + foto
+    No → descartar lat/lng (aunque lleguen en el body)
+```
+
+**En la respuesta:**
+```json
+// Con foto → coordenadas guardadas
+{ "fotoUrl": "https://cloudinary.com/...", "lat": -17.39, "lng": -66.15 }
+
+// Sin foto → coordenadas descartadas
+{ "fotoUrl": null, "lat": null, "lng": null }
+```
+
+**Qué debe hacer el frontend:** Solo activar el GPS cuando el usuario adjunte una foto. Sin foto, no pedir GPS.
+
+---
+
+## 3. Sistema de hilos bilaterales
+
+Cuando varios usuarios comentan en el mismo avistamiento, **no se ven entre sí**. Solo el dueño ve todo.
+
+```
+¿Quién hace GET /sightings/{id}/comments?
+    Es el dueño → ve TODOS los comentarios de todos
+    Es otro usuario → ve solo:
+        • Sus propios comentarios (autor_usuario_id = yo)
+        • Las respuestas del dueño dirigidas a él (reply_to_user_id = yo)
+```
+
+**Ejemplo real con 3 usuarios — lo que ve cada uno:**
+
+| Usuario | Comentarios visibles |
+|---------|---------------------|
+| Wilian (dueño) | Los 3: Carlos, la respuesta propia a Carlos, Ana |
+| Carlos | Solo 2: su comentario + la respuesta del dueño a él |
+| Ana | Solo 1: su propio comentario |
+
+**Cómo el dueño responde en privado a alguien:**  
+Usa el mismo endpoint de comentar pero agrega `replyToUserId`:
+```json
+POST /sightings/{id}/comments
+{ "mensaje": "Gracias, ¿a qué hora fue?", "replyToUserId": "{userId-de-Carlos}" }
+```
+Ese mensaje solo aparece en el GET de Carlos.
+
+---
+
+## 4. Sistema de no leídos
+
+**Cómo funciona:**  
+Cada vez que un usuario abre un hilo, el frontend llama a `PUT /sightings/{id}/read`. Eso guarda un timestamp en la tabla `lecturas_comentarios`. Los "no leídos" son comentarios creados **después** de ese timestamp.
+
+```
+noLeidos = comentarios nuevos después de la última lectura
+
+Si nunca abrió el hilo → todos los comentarios cuentan como no leídos
+```
+
+**Para el dueño:** cuenta comentarios de rescatistas que no ha visto.  
+**Para el rescatista:** cuenta respuestas del dueño dirigidas a él que no ha visto.
+
+**Probado en vivo:**
+```
+Carlos tiene 1 no leído (respuesta del dueño)
+→ GET /sightings/unread-count  →  { "total": 1, "comoRescatista": 1 }
+→ PUT /sightings/{id}/read
+→ GET /sightings/unread-count  →  { "total": 0, "comoRescatista": 0 }
+
+Wilian tiene 2 no leídos (comentarios de Carlos y Ana)
+→ GET /sightings/unread-count  →  { "total": 2, "comoDueno": 2 }
+→ PUT /sightings/{id}/read
+→ GET /sightings/unread-count  →  { "total": 0, "comoDueno": 0 }
+
+Carlos envía nuevo comentario → badge de Wilian sube a 1 automáticamente
+```
+
+**Ventaja sobre client-side:** funciona en múltiples dispositivos, sobrevive reinstalaciones, el badge es confiable.
+
+---
+
+## 5. Sistema de reputación
+
+Funciona como Google Play / Uber Driver Rating:
+- **Acumulativo** → cada avistamiento donde ayudaste suma a tu promedio global
+- **Opcional** → el dueño decide si califica, sin presión
+- **Público** → visible en la tarjeta de perfil del mapa
+- **Editable** → el dueño puede cambiar su calificación; el promedio se recalcula
+
+**Reglas:**
+- Solo el dueño puede calificar
+- Solo puede calificar a quien haya comentado en ese avistamiento
+- Una calificación por rescatista por avistamiento (upsert si la edita)
+
+**Fórmula del promedio:**
+```
+Primera vez:  nuevo = (actual × total + nuevas_estrellas) / (total + 1)
+Editando:     nuevo = (actual × total − estrellas_anteriores + nuevas_estrellas) / total
+```
+
+**Probado en vivo:**
+```
+5 estrellas → reputacion: "5.00", totalCalificaciones: 1
+Edita a 3   → reputacion: "3.00", totalCalificaciones: 1  ← recalculado correctamente
+```
+
+**Dónde aparece sin llamada extra:**
+- `GET /users/me` → campo `persona.reputacion` y `persona.totalCalificaciones`
+- `GET /users/:personaId/card` → campos `reputacion` y `totalCalificaciones`
+
+---
+
+## 6. Endpoints — referencia completa
+
+### Resumen
+
+| Método | Ruta | Auth | Estado |
+|--------|------|------|--------|
+| `POST` | `/sightings/pets/:petId` | No | Sin cambios |
+| `PUT` | `/sightings/:id/read` | JWT | 🆕 Nuevo |
+| `GET` | `/sightings/my-pets/threads` | JWT | 🆕 Nuevo |
+| `GET` | `/sightings/my-participations` | JWT | 🆕 Nuevo |
+| `GET` | `/sightings/unread-count` | JWT | 🆕 Nuevo |
+| `POST` | `/sightings/:id/comments` | JWT | Actualizado (`replyToUserId`) |
+| `GET` | `/sightings/:id/comments` | JWT | Actualizado (requiere JWT, filtra) |
+| `POST` | `/sightings/:id/rating` | JWT | 🔄 Body cambió completamente |
+| `GET` | `/sightings/:id/ratings` | No | 🆕 Reemplaza al antiguo singular |
+
+---
+
+### POST /sightings/pets/:petId — Reportar avistamiento
+
+```
 Content-Type: multipart/form-data
-Authorization: no requerido
+Sin token requerido
 ```
 
-### Parámetros de ruta
+| Campo | Tipo | Obligatorio | Descripción |
+|-------|------|-------------|-------------|
+| `lat` | number | Sí | Latitud (-90 a 90) |
+| `lng` | number | Sí | Longitud (-180 a 180) |
+| `mensajeRescatista` | string | No | Descripción (máx. 500 chars) |
+| `foto` | archivo | No | Foto de evidencia |
 
-| Campo | Tipo | Descripción |
-|-------|------|-------------|
-| `petId` | `UUID` | ID de la mascota |
-
-### Body (multipart/form-data)
-
-| Campo | Tipo | Requerido | Descripción |
-|-------|------|-----------|-------------|
-| `lat` | `number` | ✅ | Latitud donde se vio la mascota (-90 a 90) |
-| `lng` | `number` | ✅ | Longitud donde se vio la mascota (-180 a 180) |
-| `mensajeRescatista` | `string` | ❌ | Descripción de lo que vio (máx. 500 chars) |
-| `foto` | `file` | ❌ | Foto de evidencia (imagen) |
-
-### Respuesta exitosa `201`
-
+**Respuesta `201`:**
 ```json
 {
-  "avistamientoId": "6fcc2314-48b1-490e-9a0f-ad7c6cef5e20",
+  "avistamientoId": "35dc7fcf-edfd-44da-8c33-0d23c9dfd585",
   "mascotaId": "1b0cac91-3932-4091-91a4-8ff502d7a223",
-  "mensajeRescatista": "Lo vi cerca del mercado central",
+  "mensajeRescatista": "Lo vi corriendo por la plaza principal",
   "fotoEvidenciaUrl": null,
-  "fechaAvistamiento": "2026-05-30T15:58:12.988Z",
+  "fechaAvistamiento": "2026-05-30T17:05:54.266Z",
   "lat": -17.3935,
   "lng": -66.157
 }
 ```
 
-### Notificaciones disparadas
+**Dispara:** FCM push `¡Vieron a {nombre}!` + WebSocket `sighting:new`
 
-| Canal | Evento / Mensaje |
-|-------|-----------------|
-| **FCM push** | `"¡Vieron a {nombre}!"` → a todos los propietarios con `recibeAlertas: true` |
-| **WebSocket** | Evento `sighting:new` en room `pet:{mascotaId}` |
-
-**Payload WebSocket `sighting:new`:**
-```json
-{
-  "avistamientoId": "6fcc2314-...",
-  "lat": -17.3935,
-  "lng": -66.157,
-  "fotoUrl": null,
-  "mensaje": "Lo vi cerca del mercado central",
-  "fechaAvistamiento": "2026-05-30T15:58:12.988Z"
-}
-```
-
-### Errores posibles
-
-| Código | Mensaje | Causa |
-|--------|---------|-------|
-| `404` | `Mascota no encontrada` | El `petId` no existe |
-| `400` | Error de validación | `lat` o `lng` fuera de rango o no numéricos |
+**Errores:** `404` mascota no existe · `400` lat/lng inválidos
 
 ---
 
-## 2. Comentar un avistamiento
+### PUT /sightings/:id/read — Marcar hilo como leído 🆕
 
 ```
-POST /sightings/:id/comments
-Content-Type: multipart/form-data
 Authorization: Bearer {token}
+Sin body
 ```
 
-> Cualquier usuario autenticado puede comentar. No es necesario ser propietario.
+Llamar cada vez que el usuario **abre** un hilo de conversación. Guarda el timestamp actual como punto de lectura. Los comentarios anteriores a ese timestamp dejan de contar como no leídos.
 
-### Parámetros de ruta
-
-| Campo | Tipo | Descripción |
-|-------|------|-------------|
-| `id` | `UUID` | ID del avistamiento |
-
-### Body (multipart/form-data)
-
-| Campo | Tipo | Requerido | Descripción |
-|-------|------|-----------|-------------|
-| `mensaje` | `string` | ✅ | Texto del comentario (máx. 500 chars) |
-| `lat` | `number` | ❌ | Latitud — **solo se guarda si se adjunta foto** |
-| `lng` | `number` | ❌ | Longitud — **solo se guarda si se adjunta foto** |
-| `replyToUserId` | `UUID` | ❌ | ID del comentarista al que el **dueño** responde (hilo privado) |
-| `foto` | `file` | ❌ | Foto de evidencia (imagen) |
-
-> ⚠️ **Importante para el frontend:** Si el usuario no adjunta foto, no pidas ni envíes `lat/lng` — el backend los descartará de todas formas. Solo activa el GPS cuando haya foto.
->
-> El campo `replyToUserId` solo lo usa el **dueño** cuando quiere responderle a un comentarista específico. Un comentarista normal nunca lo envía.
-
-### Respuesta exitosa `201`
-
-**Con foto (GPS guardado):**
+**Respuesta `200`:**
 ```json
-{
-  "comentarioId": "811f605b-5902-4e32-9aaa-c498b69113e1",
-  "avistamientoId": "6fcc2314-48b1-490e-9a0f-ad7c6cef5e20",
-  "autorUsuarioId": "145b307f-1d35-4ff6-9557-85070e8c6ddc",
-  "replyToUserId": null,
-  "mensaje": "Le saqué foto justo aquí, estaba descansando bajo el árbol",
-  "fotoUrl": "https://res.cloudinary.com/daelr9ppy/image/upload/v1780156718/comentarios-avistamiento/6fcc2314-.../foto.png",
-  "lat": -17.39,
-  "lng": -66.155,
-  "creadoEl": "2026-05-30T15:58:39.519Z",
-  "autor": {
-    "nombre": "Wilian",
-    "apellidoPaterno": "Almendras",
-    "fotoPerfilUrl": "https://res.cloudinary.com/..."
-  }
-}
+{ "ok": true }
 ```
 
-**Respuesta del dueño a un comentarista específico:**
-```json
-{
-  "comentarioId": "9a2f1c3d-...",
-  "avistamientoId": "6fcc2314-...",
-  "autorUsuarioId": "145b307f-...",
-  "replyToUserId": "811f605b-...",
-  "mensaje": "Gracias, ¿recuerdas a qué hora fue exactamente?",
-  "fotoUrl": null,
-  "lat": null,
-  "lng": null,
-  "creadoEl": "2026-05-30T16:10:00.000Z",
-  "autor": {
-    "nombre": "Wilian",
-    "apellidoPaterno": "Almendras",
-    "fotoPerfilUrl": "https://res.cloudinary.com/..."
-  }
-}
-```
-
-**Sin foto (GPS descartado):**
-```json
-{
-  "comentarioId": "7337f8cd-4c36-4da6-8595-60ad14c839d7",
-  "avistamientoId": "6fcc2314-48b1-490e-9a0f-ad7c6cef5e20",
-  "autorUsuarioId": "145b307f-1d35-4ff6-9557-85070e8c6ddc",
-  "replyToUserId": null,
-  "mensaje": "Lo vi en la tarde por el parque",
-  "fotoUrl": null,
-  "lat": null,
-  "lng": null,
-  "creadoEl": "2026-05-30T15:58:22.019Z",
-  "autor": {
-    "nombre": "Wilian",
-    "apellidoPaterno": "Almendras",
-    "fotoPerfilUrl": "https://res.cloudinary.com/..."
-  }
-}
-```
-
-### Notificaciones disparadas
-
-| Canal | Evento / Mensaje |
-|-------|-----------------|
-| **FCM push** | `"Nuevo comentario sobre {nombre}"` → propietarios con `recibeAlertas: true` |
-| **WebSocket** | Evento `sighting:comment-new` en room `pet:{mascotaId}` |
-
-**Payload WebSocket `sighting:comment-new`:**
-```json
-{
-  "comentarioId": "811f605b-...",
-  "avistamientoId": "6fcc2314-...",
-  "mensaje": "Le saqué foto justo aquí...",
-  "fotoUrl": "https://res.cloudinary.com/...",
-  "lat": -17.39,
-  "lng": -66.155,
-  "creadoEl": "2026-05-30T15:58:39.519Z"
-}
-```
-> `lat` y `lng` son `undefined` en el payload WebSocket si no hay foto.
-
-### Errores posibles
-
-| Código | Mensaje | Causa |
-|--------|---------|-------|
-| `401` | `Token inválido o expirado` | Sin JWT o token vencido |
-| `404` | `Avistamiento no encontrado` | El `id` no existe |
-| `400` | Error de validación | `mensaje` vacío o supera 500 chars |
+**Errores:** `401` sin token · `404` avistamiento no existe
 
 ---
 
-## 3. Ver comentarios de un avistamiento
+### GET /sightings/my-pets/threads — Lista del dueño 🆕
 
 ```
-GET /sightings/:id/comments
 Authorization: Bearer {token}
 ```
 
-> **Visibilidad filtrada por rol:**
-> - **Dueño** → ve todos los comentarios de todos los usuarios.
-> - **Comentarista** → solo ve sus propios comentarios y las respuestas del dueño dirigidas a él (`replyToUserId == suId`).
+Devuelve todas las mascotas del usuario con el avistamiento más reciente que tenga actividad de comentarios. Si una mascota no tiene conversaciones, aparece con `avistamiento: null`.
 
-### Parámetros de ruta
-
-| Campo | Tipo | Descripción |
-|-------|------|-------------|
-| `id` | `UUID` | ID del avistamiento |
-
-### Respuesta exitosa `200`
-
-Array ordenado del más antiguo al más nuevo (filtrado según el token enviado):
-
+**Respuesta `200`:**
 ```json
 [
   {
-    "comentarioId": "7337f8cd-...",
-    "avistamientoId": "6fcc2314-...",
-    "autorUsuarioId": "145b307f-...",
-    "mensaje": "Lo vi en la tarde por el parque",
-    "fotoUrl": null,
-    "lat": null,
-    "lng": null,
-    "creadoEl": "2026-05-30T15:58:22.019Z",
-    "autor": {
-      "nombre": "Wilian",
-      "apellidoPaterno": "Almendras",
-      "fotoPerfilUrl": "https://res.cloudinary.com/..."
+    "mascota": {
+      "mascotaId": "1b0cac91-...",
+      "nombre": "Firulais",
+      "estado": "extraviada",
+      "fotoUrl": "https://cloudinary.com/..."
+    },
+    "avistamiento": {
+      "avistamientoId": "35dc7fcf-...",
+      "fechaAvistamiento": "2026-05-30T17:05:54.266Z",
+      "totalHilos": 2,
+      "ultimaActividad": "2026-05-30T17:06:31.790Z",
+      "ultimoMensaje": "¿Ya encontraron a Firulais?",
+      "noLeidos": 1
     }
   },
   {
-    "comentarioId": "811f605b-...",
-    "avistamientoId": "6fcc2314-...",
-    "autorUsuarioId": "145b307f-...",
-    "mensaje": "Le saqué foto justo aquí...",
-    "fotoUrl": "https://res.cloudinary.com/.../foto.png",
-    "lat": -17.39,
-    "lng": -66.155,
-    "creadoEl": "2026-05-30T15:58:39.519Z",
-    "autor": {
+    "mascota": {
+      "mascotaId": "7c76b5e2-...",
+      "nombre": "Perla",
+      "estado": "en_casa",
+      "fotoUrl": null
+    },
+    "avistamiento": null
+  }
+]
+```
+
+- `totalHilos` → cantidad de comentaristas distintos (excluyendo al dueño)
+- `noLeidos` → comentarios de rescatistas que el dueño no ha visto
+- `avistamiento: null` → la mascota no tiene conversaciones activas
+
+**Errores:** `401` sin token
+
+---
+
+### GET /sightings/my-participations — Lista del rescatista 🆕
+
+```
+Authorization: Bearer {token}
+```
+
+Devuelve los avistamientos donde el usuario autenticado comentó, con el último mensaje propio, la última respuesta del dueño y la calificación recibida.
+
+**Respuesta `200`:**
+```json
+[
+  {
+    "avistamientoId": "35dc7fcf-...",
+    "mascota": {
+      "mascotaId": "1b0cac91-...",
+      "nombre": "Firulais",
+      "estado": "extraviada",
+      "fotoUrl": "https://cloudinary.com/..."
+    },
+    "dueno": {
       "nombre": "Wilian",
-      "apellidoPaterno": "Almendras",
-      "fotoPerfilUrl": "https://res.cloudinary.com/..."
+      "fotoPerfilUrl": "https://cloudinary.com/..."
+    },
+    "miUltimoMensaje": "Era un perro café con collar azul",
+    "ultimaRespuesta": "Gracias Carlos, ¿a qué hora fue exactamente?",
+    "ultimaActividad": "2026-05-30T17:06:06.293Z",
+    "noLeidos": 1,
+    "calificacion": {
+      "estrellas": 3,
+      "mensaje": "Fue bueno pero tardó en responder"
     }
   }
 ]
 ```
 
-> Retorna `[]` si no hay comentarios — nunca `null`.
+- `ultimaRespuesta` → último mensaje del dueño dirigido a este usuario (`null` si no respondió)
+- `noLeidos` → respuestas del dueño que el rescatista no ha visto
+- `calificacion: null` → el dueño aún no calificó
 
-### Errores posibles
-
-| Código | Mensaje | Causa |
-|--------|---------|-------|
-| `401` | `Token inválido o expirado` | Sin JWT o token vencido |
-| `404` | `Avistamiento no encontrado` | El `id` no existe |
+**Errores:** `401` sin token
 
 ---
 
-## 4. Calificar un avistamiento
+### GET /sightings/unread-count — Badge del navbar 🆕
 
 ```
-POST /sightings/:id/rating
+Authorization: Bearer {token}
+```
+
+**Respuesta `200`:**
+```json
+{
+  "total": 3,
+  "comoDueno": 2,
+  "comoRescatista": 1
+}
+```
+
+- `comoDueno` → comentarios de rescatistas sin leer en sus mascotas
+- `comoRescatista` → respuestas del dueño sin leer dirigidas a él
+- `total` → suma de ambos para el badge del navbar
+
+**Errores:** `401` sin token
+
+---
+
+### POST /sightings/:id/comments — Comentar o responder
+
+```
+Content-Type: multipart/form-data
+Authorization: Bearer {token}
+```
+
+| Campo | Tipo | Obligatorio | Descripción |
+|-------|------|-------------|-------------|
+| `mensaje` | string | Sí | Texto (máx. 500 chars) |
+| `lat` | number | No | Solo se guarda con foto (regla de privacidad) |
+| `lng` | number | No | Solo se guarda con foto (regla de privacidad) |
+| `replyToUserId` | UUID | No | **Solo el dueño** — ID del comentarista al que responde |
+| `foto` | archivo | No | Foto de evidencia |
+
+**Respuesta `201` — comentarista:**
+```json
+{
+  "comentarioId": "34f73509-...",
+  "avistamientoId": "35dc7fcf-...",
+  "autorUsuarioId": "76a6e9ff-...",
+  "replyToUserId": null,
+  "mensaje": "Era un perro café con collar azul",
+  "fotoUrl": null,
+  "lat": null,
+  "lng": null,
+  "creadoEl": "2026-05-30T17:06:05.596Z",
+  "autor": { "nombre": "Carlos", "apellidoPaterno": "Lopez", "fotoPerfilUrl": null }
+}
+```
+
+**Respuesta `201` — dueño respondiendo:**
+```json
+{
+  "comentarioId": "c597de41-...",
+  "autorUsuarioId": "145b307f-...",
+  "replyToUserId": "76a6e9ff-...",
+  "mensaje": "Gracias Carlos, ¿a qué hora fue exactamente?",
+  "creadoEl": "2026-05-30T17:06:06.293Z",
+  "autor": { "nombre": "Wilian", "apellidoPaterno": "Almendras", "fotoPerfilUrl": "..." }
+}
+```
+
+**Dispara:** FCM push `Nuevo comentario sobre {nombre}` + WebSocket `sighting:comment-new`
+
+**Errores:** `401` sin token · `404` avistamiento no existe · `400` mensaje inválido
+
+---
+
+### GET /sightings/:id/comments — Ver comentarios
+
+```
+Authorization: Bearer {token}
+```
+
+> **Requiere JWT.** La respuesta varía según el rol — ver [Sistema de hilos bilaterales](#3-sistema-de-hilos-bilaterales).
+
+Array ordenado del más antiguo al más nuevo. Cada elemento:
+```json
+{
+  "comentarioId": "34f73509-...",
+  "avistamientoId": "35dc7fcf-...",
+  "autorUsuarioId": "76a6e9ff-...",
+  "replyToUserId": null,
+  "mensaje": "Era un perro café con collar azul",
+  "fotoUrl": null,
+  "lat": null,
+  "lng": null,
+  "creadoEl": "2026-05-30T17:06:05.596Z",
+  "autor": { "nombre": "Carlos", "apellidoPaterno": "Lopez", "fotoPerfilUrl": null }
+}
+```
+
+Retorna `[]` si no hay comentarios visibles para ese usuario.
+
+**Errores:** `401` sin token · `404` avistamiento no existe
+
+---
+
+### POST /sightings/:id/rating — Calificar rescatista 🔄
+
+> **Body completamente diferente al anterior.** El campo `confirmado` ya no existe.
+
+```
 Content-Type: application/json
 Authorization: Bearer {token}
 ```
 
-> **Solo el propietario** de la mascota puede calificar. Devuelve error 403 para cualquier otro usuario.  
-> Si ya existe una calificación, **la actualiza** (upsert) — no crea duplicados.
-
-### Parámetros de ruta
-
-| Campo | Tipo | Descripción |
-|-------|------|-------------|
-| `id` | `UUID` | ID del avistamiento |
-
-### Body (JSON)
-
-| Campo | Tipo | Requerido | Descripción |
-|-------|------|-----------|-------------|
-| `confirmado` | `boolean` | ✅ | `true` si el avistamiento fue verídico y útil |
-| `estrellas` | `integer` | ✅ | Puntuación al rescatista: 1 a 5 |
+Solo el dueño puede calificar. Solo puede calificar a quien haya comentado. Hace upsert (si ya calificó, actualiza y recalcula el promedio).
 
 ```json
 {
-  "confirmado": true,
-  "estrellas": 5
-}
-```
-
-### Respuesta exitosa `201`
-
-```json
-{
-  "avistamientoId": "6fcc2314-48b1-490e-9a0f-ad7c6cef5e20",
-  "autorUsuarioId": "145b307f-1d35-4ff6-9557-85070e8c6ddc",
-  "confirmado": true,
+  "rescatistaUsuarioId": "76a6e9ff-a9df-44f7-ad82-01a039c4a724",
   "estrellas": 5,
-  "creadoEl": "2026-05-30T15:58:58.611Z"
+  "mensaje": "Fue muy preciso, nos ayudó a encontrarlo"
 }
 ```
 
-### Notificaciones disparadas
+| Campo | Tipo | Obligatorio | Descripción |
+|-------|------|-------------|-------------|
+| `rescatistaUsuarioId` | UUID | Sí | ID del comentarista a calificar |
+| `estrellas` | integer | Sí | 1 a 5 |
+| `mensaje` | string | No | Comentario opcional (máx. 300 chars) |
 
-| Canal | Evento / Mensaje |
-|-------|-----------------|
-| **WebSocket** | Evento `sighting:rated` en room `pet:{mascotaId}` |
-
-**Payload WebSocket `sighting:rated`:**
+**Respuesta `201`:**
 ```json
 {
-  "avistamientoId": "6fcc2314-...",
-  "confirmado": true,
-  "estrellas": 5
-}
-```
-
-### Errores posibles
-
-| Código | Mensaje | Causa |
-|--------|---------|-------|
-| `401` | `Token inválido o expirado` | Sin JWT o token vencido |
-| `403` | `Solo el dueño puede calificar el avistamiento` | El usuario no es propietario |
-| `404` | `Avistamiento no encontrado` | El `id` no existe |
-| `400` | `estrellas must not be greater than 5` | Valor fuera del rango 1–5 |
-
----
-
-## 5. Ver calificación de un avistamiento
-
-```
-GET /sightings/:id/rating
-Authorization: no requerido
-```
-
-### Parámetros de ruta
-
-| Campo | Tipo | Descripción |
-|-------|------|-------------|
-| `id` | `UUID` | ID del avistamiento |
-
-### Respuesta exitosa `200`
-
-**Si el dueño ya calificó:**
-```json
-{
-  "avistamientoId": "6fcc2314-48b1-490e-9a0f-ad7c6cef5e20",
-  "autorUsuarioId": "145b307f-1d35-4ff6-9557-85070e8c6ddc",
-  "confirmado": true,
+  "calificacionId": "e5d0b297-...",
+  "avistamientoId": "35dc7fcf-...",
+  "autorUsuarioId": "145b307f-...",
+  "rescatistaUsuarioId": "76a6e9ff-...",
   "estrellas": 5,
-  "creadoEl": "2026-05-30T15:58:58.611Z"
+  "mensaje": "Fue muy preciso, nos ayudó a encontrarlo",
+  "creadoEl": "2026-05-31T02:59:15.328Z"
 }
 ```
 
-**Si el dueño aún no calificó:**
+**Dispara:** WebSocket `sighting:rated`
+
+**Errores:** `401` · `403` no es dueño · `404` avistamiento no existe · `400` estrellas fuera de rango o rescatista no comentó
+
+---
+
+### GET /sightings/:id/ratings — Ver calificaciones 🆕
+
+> Reemplaza al antiguo `GET /sightings/:id/rating` (singular). Ahora devuelve **array**, no objeto.
+
+```
+Sin token requerido
+```
+
+**Respuesta `200`:**
 ```json
-null
+[
+  {
+    "calificacionId": "e5d0b297-...",
+    "avistamientoId": "35dc7fcf-...",
+    "estrellas": 5,
+    "mensaje": "Fue muy preciso",
+    "creadoEl": "2026-05-31T02:59:15.328Z",
+    "rescatista": {
+      "usuarioId": "76a6e9ff-...",
+      "persona": {
+        "nombre": "Carlos",
+        "apellidoPaterno": "Lopez",
+        "fotoPerfilUrl": null,
+        "reputacion": "3.00",
+        "totalCalificaciones": 1
+      }
+    }
+  }
+]
 ```
 
-> El frontend debe manejar el caso `null` (mostrar "Sin calificación aún").
+Retorna `[]` si el dueño aún no calificó a nadie.
 
-### Errores posibles
-
-| Código | Mensaje | Causa |
-|--------|---------|-------|
-| `404` | `Avistamiento no encontrado` | El `id` no existe |
+**Errores:** `404` avistamiento no existe
 
 ---
 
-## Flujo completo recomendado (Android)
+## 7. Eventos en tiempo real
 
-```
-1. Pantalla de avistamiento
-   └── Al abrir: GET /sightings/{id}/comments   (JWT requerido)
-                  GET /sightings/{id}/rating
-   └── Escuchar WS: sighting:comment-new → agregar comentario a la lista
-                    sighting:rated       → actualizar panel de calificación
+### WebSocket — namespace `/realtime`, room `pet:{mascotaId}`
 
-2. Botón "Comentar" (cualquier usuario autenticado)
-   └── Si adjunta foto → activar GPS y enviar lat/lng
-   └── Si no adjunta foto → NO pedir GPS (backend lo ignora de todas formas)
-   └── POST /sightings/{id}/comments (multipart)
-   └── NO enviar replyToUserId — ese campo es solo para el dueño
+Unirse al room al conectarse para recibir eventos de esa mascota.
 
-3. Vista de comentarios según rol
-   └── Dueño: ve todos los comentarios de todos los usuarios
-   └── Comentarista: ve solo sus mensajes + respuestas del dueño hacia él
-       → Renderizar los comentarios del dueño con replyToUserId != null como "respuesta privada"
+| Evento | Cuándo | Payload |
+|--------|--------|---------|
+| `sighting:new` | Al crear avistamiento | `{ avistamientoId, lat, lng, fotoUrl, mensaje, fechaAvistamiento }` |
+| `sighting:comment-new` | Al comentar | `{ comentarioId, avistamientoId, mensaje, fotoUrl, lat?, lng?, creadoEl }` |
+| `sighting:rated` | Al calificar | `{ avistamientoId, rescatistaUsuarioId, estrellas }` |
 
-4. Botón "Responder" (solo visible para el dueño, dentro de cada comentario)
-   └── POST /sightings/{id}/comments con replyToUserId = usuarioId del comentarista
-   └── El comentarista verá la respuesta en su próximo GET /comments
+### FCM push — campo `data`
 
-5. Botón "Calificar" (solo visible para el dueño)
-   └── Mostrar: checkbox "¿Fue útil?" + selector de 1-5 estrellas
-   └── POST /sightings/{id}/rating (JSON)
-   └── Puede editarse (el endpoint hace upsert)
-
-6. Notificaciones push recibidas
-   └── tipo: "nuevo_avistamiento"      → navegar a pantalla de avistamientos de la mascota
-   └── tipo: "comentario_avistamiento" → navegar al avistamiento específico (avistamientoId en data)
-```
-
----
-
-## Eventos WebSocket — resumen de todos los de avistamientos
-
-| Evento | Room | Quién lo recibe | Cuándo |
-|--------|------|-----------------|--------|
-| `sighting:new` | `pet:{mascotaId}` | Todos los propietarios conectados | Al crear un avistamiento |
-| `sighting:comment-new` | `pet:{mascotaId}` | Todos los propietarios conectados | Al crear un comentario |
-| `sighting:rated` | `pet:{mascotaId}` | Todos en el room (propietarios) | Al calificar el avistamiento |
-
-> Para recibir estos eventos el cliente debe unirse al room `pet:{mascotaId}` al conectarse al namespace `/realtime`.
-
----
-
-## Data FCM — campos del objeto `data`
-
-El objeto `data` de cada push permite al frontend navegar a la pantalla correcta:
-
-| `tipo` | Campos adicionales | Pantalla destino |
-|--------|--------------------|-----------------|
+| `tipo` | Campos extra | Pantalla sugerida |
+|--------|-------------|-------------------|
 | `nuevo_avistamiento` | `mascotaId` | Lista de avistamientos de la mascota |
-| `comentario_avistamiento` | `mascotaId`, `avistamientoId` | Detalle del avistamiento específico |
+| `comentario_avistamiento` | `mascotaId`, `avistamientoId` | Hilo del avistamiento |
+
+---
+
+## 8. Flujo recomendado Android
+
+### Pantalla de chat (dos pestañas con swipe)
+
+```
+Pestaña 1 — "Mis mascotas" (dueño)
+  Al abrir:
+    → GET /sightings/my-pets/threads
+    → Mostrar badge con suma de noLeidos de todos los avistamientos
+
+  Al tocar un hilo:
+    → PUT /sightings/{id}/read          ← inmediatamente al abrir
+    → GET /sightings/{id}/comments      ← con token propio
+    → Escuchar WebSocket sighting:comment-new → agregar al hilo en tiempo real
+
+  En cada comentario: botón "Responder"
+    → POST /sightings/{id}/comments  con replyToUserId = autorUsuarioId del comentario
+
+  En cada comentario: botón "Calificar" (opcional, mostrar solo si no calificó aún)
+    → POST /sightings/{id}/rating
+       con rescatistaUsuarioId + estrellas + mensaje opcional
+    → Puede editarse después (upsert)
+
+Pestaña 2 — "Ayudé" (rescatista)
+  Al abrir:
+    → GET /sightings/my-participations
+    → Mostrar badge con suma de noLeidos
+
+  Al tocar un hilo:
+    → PUT /sightings/{id}/read          ← inmediatamente al abrir
+    → GET /sightings/{id}/comments      ← con token propio
+    → Escuchar WebSocket sighting:comment-new
+
+  Para comentar:
+    → Botón "Comentar"
+    → ¿Adjunta foto? → activar GPS y enviar lat + lng
+    → Sin foto → NO pedir GPS
+    → POST /sightings/{id}/comments  (sin replyToUserId)
+```
+
+### Badge del navbar
+
+```
+Al iniciar sesión y al volver a la app:
+  → GET /sightings/unread-count
+  → Mostrar total en el ícono de Chat del navbar
+
+Actualizar en tiempo real:
+  → Cuando llega WebSocket sighting:comment-new → incrementar badge +1
+  → Cuando el usuario abre un hilo → PUT /:id/read → decrementar según noLeidos que tenía
+```
+
+### Tarjeta pública de rescatista (popup del mapa)
+
+```
+→ GET /users/{personaId}/card
+→ Mostrar: "4.8 ★  (12 calificaciones)"
+   reputacion + totalCalificaciones ya vienen en la respuesta
+```
+
+### DTOs de Android que deben actualizarse
+
+**`SightingCommentDto` — agregar campo:**
+```kotlin
+@SerializedName("replyToUserId") val replyToUserId: String?
+```
+
+**`CreateRatingRequest` — reescribir:**
+```kotlin
+// Antes (ya no funciona):
+data class CreateRatingRequest(val confirmado: Boolean, val estrellas: Int)
+
+// Ahora:
+data class CreateRatingRequest(
+    val rescatistaUsuarioId: String,
+    val estrellas: Int,
+    val mensaje: String? = null
+)
+```
+
+**`SightingRatingDto` — reescribir:**
+```kotlin
+data class SightingRatingDto(
+    val calificacionId: String,
+    val avistamientoId: String,
+    val autorUsuarioId: String,
+    val rescatistaUsuarioId: String,
+    val estrellas: Int,
+    val mensaje: String?,
+    val creadoEl: String,
+    val rescatista: RescatistaDto?
+)
+
+data class RescatistaDto(
+    val usuarioId: String,
+    val persona: PersonaReputacionDto
+)
+
+data class PersonaReputacionDto(
+    val nombre: String?,
+    val apellidoPaterno: String?,
+    val fotoPerfilUrl: String?,
+    val reputacion: String?,
+    val totalCalificaciones: Int?
+)
+```

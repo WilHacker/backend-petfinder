@@ -5,6 +5,7 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  Put,
   UploadedFile,
   UseGuards,
   UseInterceptors,
@@ -95,6 +96,55 @@ export class SightingsController {
     return this.sightingsService.getThanks(avistamientoId);
   }
 
+  @Put(':id/read')
+  @ApiOperation({
+    summary: 'Marcar hilo como leído',
+    description:
+      'El frontend llama a este endpoint cada vez que el usuario abre un hilo de conversación. ' +
+      'Actualiza el timestamp de última lectura, lo que hace que noLeidos baje a 0 para ese avistamiento.',
+  })
+  markAsRead(
+    @Param('id', ParseUUIDPipe) avistamientoId: string,
+    @CurrentUser('sub') usuarioId: string,
+  ) {
+    return this.sightingsService.markAsRead(avistamientoId, usuarioId);
+  }
+
+  @Get('my-pets/threads')
+  @ApiOperation({
+    summary: 'Lista de conversaciones del dueño (pestaña "Mis mascotas")',
+    description:
+      'Devuelve todas las mascotas del usuario autenticado con el avistamiento más reciente ' +
+      'que tenga actividad de comentarios. Si una mascota no tiene conversaciones, ' +
+      'aparece con avistamiento: null. noLeidos es siempre 0 en esta versión.',
+  })
+  getMyPetsThreads(@CurrentUser('sub') usuarioId: string) {
+    return this.sightingsService.getMyPetsThreads(usuarioId);
+  }
+
+  @Get('my-participations')
+  @ApiOperation({
+    summary: 'Lista de conversaciones del rescatista (pestaña "Ayudé")',
+    description:
+      'Devuelve los avistamientos donde el usuario autenticado comentó, ' +
+      'con el último mensaje propio, la última respuesta del dueño y la calificación recibida. ' +
+      'noLeidos es siempre 0 en esta versión.',
+  })
+  getMyParticipations(@CurrentUser('sub') usuarioId: string) {
+    return this.sightingsService.getMyParticipations(usuarioId);
+  }
+
+  @Get('unread-count')
+  @ApiOperation({
+    summary: 'Badge de no leídos para el navbar',
+    description:
+      'Devuelve el conteo de mensajes no leídos. ' +
+      'En esta versión retorna siempre 0 — el tracking real se implementa en el siguiente sprint.',
+  })
+  getUnreadCount(@CurrentUser('sub') usuarioId: string) {
+    return this.sightingsService.getUnreadCount(usuarioId);
+  }
+
   @Post(':id/comments')
   @UseInterceptors(FileInterceptor('foto', { storage: memoryStorage() }))
   @ApiConsumes('multipart/form-data')
@@ -152,10 +202,13 @@ export class SightingsController {
 
   @Post(':id/rating')
   @ApiOperation({
-    summary: 'Calificar un avistamiento (solo dueño)',
+    summary: 'Calificar a un rescatista (solo dueño)',
     description:
-      'El dueño confirma si el avistamiento fue verídico y asigna estrellas al rescatista (1–5). ' +
-      'Se puede actualizar: hace upsert. Emite evento WebSocket sighting:rated.',
+      'El dueño califica a un comentarista específico con 1–5 estrellas y un mensaje opcional. ' +
+      'Solo se puede calificar a alguien que haya comentado en el avistamiento. ' +
+      'Si ya calificó a ese rescatista, actualiza la calificación (upsert). ' +
+      'La reputación del rescatista se recalcula automáticamente. ' +
+      'Emite evento WebSocket sighting:rated.',
   })
   createRating(
     @Param('id', ParseUUIDPipe) avistamientoId: string,
@@ -165,13 +218,14 @@ export class SightingsController {
     return this.sightingsService.createRating(avistamientoId, usuarioId, dto);
   }
 
-  @Get(':id/rating')
+  @Get(':id/ratings')
   @Public()
   @ApiOperation({
-    summary: 'Ver calificación de un avistamiento',
-    description: 'Público. Retorna null si el dueño aún no ha calificado.',
+    summary: 'Ver calificaciones de un avistamiento',
+    description:
+      'Público. Lista todas las calificaciones que el dueño dio en este avistamiento, con el perfil y reputación de cada rescatista.',
   })
-  getRating(@Param('id', ParseUUIDPipe) avistamientoId: string) {
-    return this.sightingsService.getRating(avistamientoId);
+  getSightingRatings(@Param('id', ParseUUIDPipe) avistamientoId: string) {
+    return this.sightingsService.getSightingRatings(avistamientoId);
   }
 }

@@ -48,6 +48,8 @@ export class UsersService {
             ci: true,
             fotoPerfilUrl: true,
             fechaNacimiento: true,
+            reputacion: true,
+            totalCalificaciones: true,
             mediosContacto: true,
           },
         },
@@ -362,6 +364,8 @@ export class UsersService {
         apellidoPaterno: true,
         apellidoMaterno: true,
         fotoPerfilUrl: true,
+        reputacion: true,
+        totalCalificaciones: true,
         mediosContacto: { select: { tipo: true, valor: true } },
         mascotasPropietario: {
           select: {
@@ -387,6 +391,8 @@ export class UsersService {
       personaId: persona.personaId,
       nombreCompleto: `${persona.nombre} ${persona.apellidoPaterno}`.trim(),
       fotoPerfilUrl: persona.fotoPerfilUrl,
+      reputacion: Number(persona.reputacion),
+      totalCalificaciones: persona.totalCalificaciones,
       contactos: persona.mediosContacto.map((c) => ({ tipo: c.tipo, valor: c.valor })),
       mascotas: persona.mascotasPropietario.map((pm) => ({
         mascotaId: pm.mascota.mascotaId,
