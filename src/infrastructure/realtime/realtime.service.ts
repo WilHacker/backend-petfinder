@@ -225,4 +225,25 @@ export class RealtimeService {
     this.server.emit('community:alert-activated', payload);
     this.logger.debug(`[WS] community:alert-activated → broadcast (mascota ${mascotaId})`);
   }
+
+  emitMapLostPetAdded(payload: {
+    mascotaId: string;
+    nombre: string;
+    tipo: string | null;
+    fotoUrl: string | null;
+    lat: number;
+    lng: number;
+    fechaPerdida: Date;
+    recompensa: number | null;
+  }): void {
+    if (!this.server) return;
+    this.server.emit('map:lost-pet-added', payload);
+    this.logger.debug(`[WS] map:lost-pet-added → broadcast (mascota ${payload.mascotaId})`);
+  }
+
+  emitMapLostPetRemoved(mascotaId: string): void {
+    if (!this.server) return;
+    this.server.emit('map:lost-pet-removed', { mascotaId });
+    this.logger.debug(`[WS] map:lost-pet-removed → broadcast (mascota ${mascotaId})`);
+  }
 }

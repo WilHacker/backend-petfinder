@@ -402,6 +402,46 @@ export class PetsService {
         void this.notifications.sendPetLostAlert(mascotaId);
         void this.notifications.sendZoneAlert(mascotaId);
         void this.notifications.sendRadiusAlert(mascotaId);
+
+        // Broadcast al mapa público: nuevo pin de mascota extraviada
+        const pinRows = await this.prisma.$queryRaw<
+          Array<{
+            lat: number | null;
+            lng: number | null;
+            tipo_nombre: string | null;
+            foto_url: string | null;
+            recompensa: string | null;
+          }>
+        >`
+          SELECT
+            ST_Y(r.ultima_ubicacion_conocida::geometry) AS lat,
+            ST_X(r.ultima_ubicacion_conocida::geometry) AS lng,
+            COALESCE(tm.nombre, NULL)                   AS tipo_nombre,
+            (SELECT f.foto_url FROM fotos_mascota f
+             WHERE f.mascota_id = m.mascota_id
+             ORDER BY f.es_principal DESC, f.foto_id ASC LIMIT 1) AS foto_url,
+            r.recompensa::text
+          FROM reportes_extravio r
+          JOIN mascotas m          ON m.mascota_id = r.mascota_id
+          LEFT JOIN tipos_mascota tm ON tm.tipo_id = m.tipo_id
+          WHERE r.mascota_id    = ${mascotaId}::uuid
+            AND r.estado_reporte = 'abierto'
+          LIMIT 1
+        `;
+
+        const pin = pinRows[0];
+        if (pin?.lat != null && pin.lng != null) {
+          this.realtime.emitMapLostPetAdded({
+            mascotaId,
+            nombre: actualizada.nombre,
+            tipo: pin.tipo_nombre,
+            fotoUrl: pin.foto_url,
+            lat: pin.lat,
+            lng: pin.lng,
+            fechaPerdida: new Date(),
+            recompensa: pin.recompensa != null ? Number(pin.recompensa) : null,
+          });
+        }
       }
     } else {
       // Cierra cualquier reporte abierto al recuperar o cambiar estado
@@ -409,6 +449,9 @@ export class PetsService {
         where: { mascotaId, estadoReporte: 'abierto' },
         data: { estadoReporte: 'cerrado' },
       });
+
+      // Broadcast al mapa público: eliminar pin de mascota recuperada
+      this.realtime.emitMapLostPetRemoved(mascotaId);
     }
 
     this.realtime.emitPetStatusChanged({

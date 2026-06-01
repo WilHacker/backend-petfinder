@@ -1,6 +1,6 @@
 # Avistamientos, Chat Privado y Alerta Comunitaria
 
-Documentación para el equipo frontend (Android) sobre el sistema de avistamientos con chat bilateral, tracking de no leídos y alerta comunitaria en el mapa.
+Documentación para el equipo frontend (Android) sobre el sistema de avistamientos con chat bilateral, tracking de no leídos, alerta comunitaria y actualizaciones del mapa en tiempo real.
 
 ---
 
@@ -12,8 +12,9 @@ Documentación para el equipo frontend (Android) sobre el sistema de avistamient
 4. [No leídos y threads](#4-no-leídos-y-threads)
 5. [Alerta comunitaria](#5-alerta-comunitaria)
 6. [Mapa — campo alertaComunidad](#6-mapa--campo-alertacomunidad)
-7. [Eventos WebSocket en tiempo real](#7-eventos-websocket-en-tiempo-real)
-8. [DTOs Android a actualizar](#8-dtos-android-a-actualizar)
+7. [Mapa en tiempo real — pins de mascotas perdidas](#7-mapa-en-tiempo-real--pins-de-mascotas-perdidas)
+8. [Eventos WebSocket en tiempo real](#8-eventos-websocket-en-tiempo-real)
+9. [DTOs Android a actualizar](#9-dtos-android-a-actualizar)
 
 ---
 
@@ -412,12 +413,52 @@ Ambos endpoints del mapa ahora incluyen el campo `alertaComunidad` en cada masco
 
 ---
 
-## 7. Eventos WebSocket en tiempo real
+## 7. Mapa en tiempo real — pins de mascotas perdidas
+
+El mapa público nunca necesita polling. El backend emite tres eventos broadcast que permiten mantener los pins actualizados sin recargar la pantalla.
+
+### Cuándo aparece un pin nuevo
+
+Cuando el dueño marca su mascota como `extraviada` (`PUT /pets/:id/status`), el backend:
+
+1. Crea el reporte de extravío en BD
+2. Emite `map:lost-pet-added` → **broadcast a todos los clientes conectados**
+
+El Android debe escuchar este evento y agregar el pin al mapa directamente, sin llamar a `GET /map/public/lost-pets`.
+
+### Cuándo desaparece un pin
+
+Cuando el dueño recupera su mascota (cualquier estado distinto de `extraviada`), el backend:
+
+1. Cierra el reporte en BD
+2. Emite `map:lost-pet-removed` → **broadcast a todos los clientes conectados**
+
+El Android debe escuchar este evento y eliminar el pin del mapa usando el `mascotaId`.
+
+### Cuándo cambia la apariencia de un pin
+
+Cuando el dueño activa la alerta comunitaria (`POST /pets/:id/alert/community`), el backend emite `community:alert-activated` → **broadcast a todos los clientes conectados**.
+
+El Android actualiza el pin existente para mostrarlo destacado (sin eliminarlo ni agregarlo).
+
+### Resumen de eventos del mapa
+
+| Evento | Acción en el mapa |
+| --- | --- |
+| `map:lost-pet-added` | Agregar nuevo pin de mascota perdida |
+| `map:lost-pet-removed` | Eliminar pin existente por `mascotaId` |
+| `community:alert-activated` | Actualizar pin existente a estado "alerta activa" |
+
+> **Importante:** Ninguno de estos eventos requiere estar suscrito a un room específico. Los tres son broadcast — llegan a cualquier cliente conectado al namespace `/realtime`.
+
+---
+
+## 8. Eventos WebSocket en tiempo real
 
 Todos los eventos se reciben en el namespace `/realtime`.
 
 ### `sighting:new`
-**Room:** `pet:{mascotaId}`  
+**Room:** `pet:{mascotaId}` — solo propietarios/cuidadores de la mascota  
 Se emite cuando alguien reporta un nuevo avistamiento de tu mascota.
 
 ```json
@@ -425,7 +466,7 @@ Se emite cuando alguien reporta un nuevo avistamiento de tu mascota.
   "avistamientoId": "uuid",
   "lat": -17.3935,
   "lng": -66.157,
-  "fotoUrl": "https://..." ,
+  "fotoUrl": "https://...",
   "mensaje": "Lo vi cerca del mercado",
   "fechaAvistamiento": "2026-05-31T14:00:00Z"
 }
@@ -434,7 +475,7 @@ Se emite cuando alguien reporta un nuevo avistamiento de tu mascota.
 ---
 
 ### `sighting:comment-new`
-**Room:** `pet:{mascotaId}`  
+**Room:** `pet:{mascotaId}` — solo propietarios/cuidadores de la mascota  
 Se emite cuando alguien deja un comentario en un avistamiento de tu mascota.
 
 ```json
@@ -456,7 +497,7 @@ Se emite cuando alguien deja un comentario en un avistamiento de tu mascota.
 
 ### `community:alert-activated`
 **Broadcast:** todos los clientes conectados  
-Se emite cuando un dueño activa la alerta comunitaria. Úsalo para actualizar el mapa sin necesidad de hacer polling.
+Se emite cuando un dueño activa la alerta comunitaria.
 
 ```json
 {
@@ -468,14 +509,80 @@ Se emite cuando un dueño activa la alerta comunitaria. Úsalo para actualizar e
 }
 ```
 
-**Flujo recomendado en Android:**
-1. Al recibir `community:alert-activated`, buscar el pin de `mascotaId` en el mapa
-2. Actualizar su estado a `alertaComunidad.activa = true`
-3. Cambiar el ícono/color del pin sin hacer una nueva llamada a `GET /map/public/lost-pets`
+**Flujo en Android:**
+
+1. Buscar el pin de `mascotaId` en el mapa
+2. Actualizar su estado a `alertaComunidad.activa = true` con `expiraEl`
+3. Cambiar el ícono/color del pin sin llamar a `GET /map/public/lost-pets`
 
 ---
 
-## 8. DTOs Android a actualizar
+### `map:lost-pet-added`
+
+**Broadcast:** todos los clientes conectados  
+Se emite cuando una mascota pasa a estado `extraviada`. Contiene todos los datos necesarios para agregar el pin al mapa directamente.
+
+```json
+{
+  "mascotaId": "uuid",
+  "nombre": "Firulais",
+  "tipo": "Perro",
+  "fotoUrl": "https://res.cloudinary.com/...",
+  "lat": -17.465,
+  "lng": -66.211,
+  "fechaPerdida": "2026-06-01T04:44:45Z",
+  "recompensa": 0
+}
+```
+
+> `tipo` puede ser `null` si la mascota no tiene tipo registrado.  
+> `fotoUrl` puede ser `null` si la mascota no tiene fotos.  
+> `recompensa` puede ser `null` si el dueño no ofrece recompensa.  
+> Si la mascota no tiene GPS registrado, este evento **no se emite** (no hay coordenadas para el pin).
+
+**Flujo en Android:**
+
+1. Recibir el evento
+2. Crear el objeto pin con los datos del payload
+3. Agregarlo al mapa sin necesidad de llamar a ningún endpoint
+
+---
+
+### `map:lost-pet-removed`
+
+**Broadcast:** todos los clientes conectados  
+Se emite cuando una mascota deja de estar `extraviada` (el dueño la recuperó o cambió su estado).
+
+```json
+{
+  "mascotaId": "uuid"
+}
+```
+
+**Flujo en Android:**
+
+1. Recibir el evento
+2. Buscar el pin con ese `mascotaId` en el mapa
+3. Eliminarlo
+
+---
+
+### `pet:status-changed`
+**Room:** `pet:{mascotaId}` — solo propietarios/cuidadores de la mascota  
+Se emite en todos los cambios de estado. Útil para actualizar la pantalla de detalle de la mascota o la lista de mascotas propias, pero **no para el mapa público** (usar `map:lost-pet-added` / `map:lost-pet-removed` para eso).
+
+```json
+{
+  "mascotaId": "uuid",
+  "nombre": "Firulais",
+  "estado": "extraviada",
+  "fechaCambio": "2026-06-01T04:44:45Z"
+}
+```
+
+---
+
+## 9. DTOs Android a actualizar
 
 ### Nuevos campos en `SightingDto`
 Sin cambios respecto a la versión anterior.

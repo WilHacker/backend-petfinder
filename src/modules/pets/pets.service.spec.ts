@@ -124,6 +124,8 @@ const mockRealtime = {
   emitPetLocationUpdated: jest.fn(),
   emitPetProfileUpdated: jest.fn(),
   emitCommunityAlertActivated: jest.fn(),
+  emitMapLostPetAdded: jest.fn(),
+  emitMapLostPetRemoved: jest.fn(),
 };
 
 const mockNotifications = {
@@ -757,7 +759,10 @@ describe('PetsService', () => {
     });
 
     it('crea reporte de extravío y envía las 3 alertas si no hay reporte abierto', async () => {
-      mockPrisma.reporteExtravio.findFirst.mockResolvedValue(null); // sin reporte previo
+      mockPrisma.reporteExtravio.findFirst.mockResolvedValue(null);
+      mockPrisma.$queryRaw.mockResolvedValue([
+        { lat: -17.46, lng: -66.21, tipo_nombre: 'Perro', foto_url: null, recompensa: null },
+      ]);
 
       await service.updateStatus(MASCOTA_ID, PERSONA_ID, 'extraviada');
 
@@ -767,6 +772,36 @@ describe('PetsService', () => {
       expect(mockNotifications.sendRadiusAlert).toHaveBeenCalledWith(MASCOTA_ID);
     });
 
+    it('emite map:lost-pet-added broadcast cuando se crea el reporte', async () => {
+      mockPrisma.reporteExtravio.findFirst.mockResolvedValue(null);
+      mockPrisma.$queryRaw.mockResolvedValue([
+        {
+          lat: -17.46,
+          lng: -66.21,
+          tipo_nombre: 'Perro',
+          foto_url: 'https://cdn/foto.jpg',
+          recompensa: '0.00',
+        },
+      ]);
+
+      await service.updateStatus(MASCOTA_ID, PERSONA_ID, 'extraviada');
+
+      expect(mockRealtime.emitMapLostPetAdded).toHaveBeenCalledWith(
+        expect.objectContaining({ mascotaId: MASCOTA_ID, lat: -17.46, lng: -66.21 }),
+      );
+    });
+
+    it('no emite map:lost-pet-added si la mascota no tiene GPS', async () => {
+      mockPrisma.reporteExtravio.findFirst.mockResolvedValue(null);
+      mockPrisma.$queryRaw.mockResolvedValue([
+        { lat: null, lng: null, tipo_nombre: null, foto_url: null, recompensa: null },
+      ]);
+
+      await service.updateStatus(MASCOTA_ID, PERSONA_ID, 'extraviada');
+
+      expect(mockRealtime.emitMapLostPetAdded).not.toHaveBeenCalled();
+    });
+
     it('no crea reporte duplicado si ya hay uno abierto', async () => {
       mockPrisma.reporteExtravio.findFirst.mockResolvedValue({ reporteId: 5 });
 
@@ -774,6 +809,7 @@ describe('PetsService', () => {
 
       expect(mockPrisma.$executeRaw).not.toHaveBeenCalled();
       expect(mockNotifications.sendPetLostAlert).not.toHaveBeenCalled();
+      expect(mockRealtime.emitMapLostPetAdded).not.toHaveBeenCalled();
     });
 
     it('cierra reportes abiertos cuando el estado no es extraviada', async () => {
@@ -792,6 +828,19 @@ describe('PetsService', () => {
           data: { estadoReporte: 'cerrado' },
         }),
       );
+    });
+
+    it('emite map:lost-pet-removed broadcast al recuperar la mascota', async () => {
+      mockPrisma.mascota.update.mockResolvedValue({
+        mascotaId: MASCOTA_ID,
+        nombre: 'Firulais',
+        estado: 'en_casa',
+      });
+      mockPrisma.reporteExtravio.updateMany.mockResolvedValue({ count: 1 });
+
+      await service.updateStatus(MASCOTA_ID, PERSONA_ID, 'en_casa');
+
+      expect(mockRealtime.emitMapLostPetRemoved).toHaveBeenCalledWith(MASCOTA_ID);
     });
 
     it('lanza NotFoundException si la mascota no existe', async () => {
