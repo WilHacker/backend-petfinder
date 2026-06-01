@@ -123,6 +123,7 @@ const mockRealtime = {
   emitOwnerAdded: jest.fn(),
   emitPetLocationUpdated: jest.fn(),
   emitPetProfileUpdated: jest.fn(),
+  emitCommunityAlertActivated: jest.fn(),
 };
 
 const mockNotifications = {
@@ -359,16 +360,28 @@ describe('PetsService', () => {
   describe('sendCommunityAlert', () => {
     beforeEach(() => {
       mockPrisma.mascota.findUnique.mockResolvedValue(mockMascota);
-      mockPrisma.$queryRaw.mockResolvedValue([{ lat: -16.5 }]);
+      mockPrisma.$queryRaw.mockResolvedValue([{ lat: -16.5, lng: -68.1 }]);
+      mockPrisma.$executeRaw.mockResolvedValue(1);
       mockNotifications.sendRadiusAlert.mockResolvedValue(3);
     });
 
-    it('retorna el conteo de usuarios notificados', async () => {
+    it('retorna el conteo de usuarios notificados y expiraEl', async () => {
       const result = await service.sendCommunityAlert(MASCOTA_ID, PERSONA_ID, 5000);
 
       expect(result.usuariosNotificados).toBe(3);
       expect(result.message).toContain('3 usuario(s)');
+      expect(result.expiraEl).toBeInstanceOf(Date);
       expect(mockNotifications.sendRadiusAlert).toHaveBeenCalledWith(MASCOTA_ID, 5000);
+      expect(mockPrisma.$executeRaw).toHaveBeenCalled();
+      expect(mockRealtime.emitCommunityAlertActivated).toHaveBeenCalledWith(
+        MASCOTA_ID,
+        expect.objectContaining({
+          mascotaId: MASCOTA_ID,
+          lat: -16.5,
+          lng: -68.1,
+          radioMetros: 5000,
+        }),
+      );
     });
 
     it('retorna mensaje y razon cuando no hay usuarios cercanos', async () => {
@@ -379,10 +392,11 @@ describe('PetsService', () => {
       expect(result.usuariosNotificados).toBe(0);
       expect(result.message).toBe('No se pudo notificar a nadie');
       expect(result.razon).toContain('1 km');
+      expect(result.expiraEl).toBeInstanceOf(Date);
     });
 
     it('lanza BadRequestException si la mascota no tiene GPS', async () => {
-      mockPrisma.$queryRaw.mockResolvedValue([{ lat: null }]);
+      mockPrisma.$queryRaw.mockResolvedValue([{ lat: null, lng: null }]);
 
       await expect(service.sendCommunityAlert(MASCOTA_ID, PERSONA_ID, 5000)).rejects.toThrow(
         BadRequestException,

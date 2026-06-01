@@ -22,6 +22,8 @@ type PublicLostPetRow = {
   lng: number;
   fecha_perdida: Date;
   recompensa: string | null;
+  alerta_comunidad_activa: boolean;
+  alerta_comunidad_expira_el: Date | null;
 };
 
 type CoOwnerRow = {
@@ -43,6 +45,8 @@ type LostPetRow = {
   lng: number | null;
   fecha_perdida: Date;
   recompensa: string | null;
+  alerta_comunidad_activa: boolean;
+  alerta_comunidad_expira_el: Date | null;
 };
 
 type ZonaSnapshotRow = {
@@ -124,7 +128,9 @@ export class MapService {
           ST_Y(r.ultima_ubicacion_conocida::geometry) AS lat,
           ST_X(r.ultima_ubicacion_conocida::geometry) AS lng,
           r.fecha_perdida,
-          r.recompensa::text
+          r.recompensa::text,
+          (r.alerta_comunidad_activa AND (r.alerta_comunidad_expira_el IS NULL OR r.alerta_comunidad_expira_el > NOW())) AS alerta_comunidad_activa,
+          r.alerta_comunidad_expira_el
         FROM reportes_extravio r
         JOIN mascotas m        ON m.mascota_id = r.mascota_id
         LEFT JOIN tipos_mascota tm ON tm.tipo_id = m.tipo_id
@@ -192,6 +198,9 @@ export class MapService {
         ubicacion: { lat: Number(r.lat), lng: Number(r.lng) },
         fechaPerdida: r.fecha_perdida,
         recompensa: r.recompensa != null ? Number(r.recompensa) : null,
+        alertaComunidad: r.alerta_comunidad_activa
+          ? { activa: true, expiraEl: r.alerta_comunidad_expira_el }
+          : { activa: false, expiraEl: null },
       })),
 
       zonas: zonasRaw.map((z) => {
@@ -239,7 +248,9 @@ export class MapService {
         ST_Y(r.ultima_ubicacion_conocida::geometry) AS lat,
         ST_X(r.ultima_ubicacion_conocida::geometry) AS lng,
         r.fecha_perdida,
-        r.recompensa::text
+        r.recompensa::text,
+        (r.alerta_comunidad_activa AND (r.alerta_comunidad_expira_el IS NULL OR r.alerta_comunidad_expira_el > NOW())) AS alerta_comunidad_activa,
+        r.alerta_comunidad_expira_el
       FROM reportes_extravio r
       JOIN mascotas m        ON m.mascota_id = r.mascota_id
       LEFT JOIN tipos_mascota tm ON tm.tipo_id = m.tipo_id
@@ -259,6 +270,9 @@ export class MapService {
       ubicacion: { lat: Number(r.lat), lng: Number(r.lng) },
       fechaPerdida: r.fecha_perdida,
       recompensa: r.recompensa != null ? Number(r.recompensa) : null,
+      alertaComunidad: r.alerta_comunidad_activa
+        ? { activa: true, expiraEl: r.alerta_comunidad_expira_el }
+        : { activa: false, expiraEl: null },
     }));
   }
 }

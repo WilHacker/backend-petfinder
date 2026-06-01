@@ -295,6 +295,8 @@ model ReporteExtravio {
   ultimaUbicacionConocida Unsupported("geometry(Point, 4326)")? @map("ultima_ubicacion_conocida")
   recompensa              Decimal?  @default(0.00) @db.Decimal(10, 2)
   estadoReporte           String?   @default("abierto") @map("estado_reporte") @db.VarChar(20)
+  alertaComunidadActiva   Boolean   @default(false) @map("alerta_comunidad_activa")
+  alertaComunidadExpiraEl DateTime? @map("alerta_comunidad_expira_el") @db.Timestamptz
 
   mascota Mascota? @relation(fields: [mascotaId], references: [mascotaId], onDelete: Cascade)
 

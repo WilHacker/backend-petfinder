@@ -56,6 +56,8 @@ const mockLostPet = {
   lng: -66.16,
   fecha_perdida: new Date('2026-05-20T14:30:00Z'),
   recompensa: '200.00',
+  alerta_comunidad_activa: false,
+  alerta_comunidad_expira_el: null,
 };
 
 const mockLostPetSinRecompensa = {
@@ -243,6 +245,7 @@ describe('MapService', () => {
         ubicacion: { lat: -17.4, lng: -66.16 },
         fechaPerdida: mockLostPet.fecha_perdida,
         recompensa: 200,
+        alertaComunidad: { activa: false, expiraEl: null },
       });
     });
 
@@ -329,6 +332,8 @@ describe('MapService', () => {
       lng: -66.2,
       fecha_perdida: new Date('2026-05-01T10:00:00Z'),
       recompensa: '150.00',
+      alerta_comunidad_activa: false,
+      alerta_comunidad_expira_el: null,
     };
 
     it('retorna lista de mascotas perdidas con todos los campos', async () => {
@@ -346,6 +351,7 @@ describe('MapService', () => {
         ubicacion: { lat: -17.5, lng: -66.2 },
         fechaPerdida: mockPublicRow.fecha_perdida,
         recompensa: 150,
+        alertaComunidad: { activa: false, expiraEl: null },
       });
     });
 

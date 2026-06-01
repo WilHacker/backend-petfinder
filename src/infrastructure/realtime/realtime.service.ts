@@ -216,4 +216,13 @@ export class RealtimeService {
     this.server.to(room).emit('sighting:rated', payload);
     this.logger.debug(`[WS] sighting:rated → room ${room}`);
   }
+
+  emitCommunityAlertActivated(
+    mascotaId: string,
+    payload: { mascotaId: string; lat: number; lng: number; radioMetros: number; expiraEl: Date },
+  ): void {
+    if (!this.server) return;
+    this.server.emit('community:alert-activated', payload);
+    this.logger.debug(`[WS] community:alert-activated → broadcast (mascota ${mascotaId})`);
+  }
 }

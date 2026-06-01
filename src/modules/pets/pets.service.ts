@@ -236,7 +236,7 @@ export class PetsService {
     mascotaId: string,
     personaId: string,
     radio: number,
-  ): Promise<{ message: string; usuariosNotificados: number; razon?: string }> {
+  ): Promise<{ message: string; usuariosNotificados: number; expiraEl: Date; razon?: string }> {
     const mascota = await this.prisma.mascota.findUnique({
       where: { mascotaId },
       include: { propietarios: true },
@@ -244,9 +244,12 @@ export class PetsService {
     if (!mascota) throw new NotFoundException('Mascota no encontrada');
     this.checkOwnership(mascota, personaId);
 
-    const gpsRows = await this.prisma.$queryRaw<Array<{ lat: number | null }>>`
-      SELECT CASE WHEN ultima_ubicacion_conocida IS NOT NULL
-                  THEN ST_Y(ultima_ubicacion_conocida::geometry) END AS lat
+    const gpsRows = await this.prisma.$queryRaw<Array<{ lat: number | null; lng: number | null }>>`
+      SELECT
+        CASE WHEN ultima_ubicacion_conocida IS NOT NULL
+             THEN ST_Y(ultima_ubicacion_conocida::geometry) END AS lat,
+        CASE WHEN ultima_ubicacion_conocida IS NOT NULL
+             THEN ST_X(ultima_ubicacion_conocida::geometry) END AS lng
       FROM mascotas
       WHERE mascota_id = ${mascotaId}::uuid
     `;
@@ -257,18 +260,41 @@ export class PetsService {
       );
     }
 
+    const { lat, lng } = gpsRows[0];
+    const expiraEl = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 horas
+
+    // Marca la alerta como activa en el reporte de extravío abierto
+    await this.prisma.$executeRaw`
+      UPDATE reportes_extravio
+      SET alerta_comunidad_activa   = TRUE,
+          alerta_comunidad_expira_el = ${expiraEl}
+      WHERE mascota_id    = ${mascotaId}::uuid
+        AND estado_reporte = 'abierto'
+    `;
+
+    // Emite a todos los clientes conectados para actualizar el mapa en tiempo real
+    this.realtime.emitCommunityAlertActivated(mascotaId, {
+      mascotaId,
+      lat: lat,
+      lng: lng!,
+      radioMetros: radio,
+      expiraEl,
+    });
+
     const count = await this.notifications.sendRadiusAlert(mascotaId, radio);
 
     if (count > 0) {
       return {
         message: `Alerta enviada a ${count} usuario(s) cercano(s)`,
         usuariosNotificados: count,
+        expiraEl,
       };
     }
 
     return {
       message: 'No se pudo notificar a nadie',
       usuariosNotificados: 0,
+      expiraEl,
       razon:
         `No hay usuarios con la app activa y GPS conocido dentro del radio de ${radio / 1000} km. ` +
         'Intenta ampliar el radio o espera a que haya más usuarios cerca.',
