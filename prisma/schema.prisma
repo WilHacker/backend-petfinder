@@ -87,6 +87,10 @@ model Usuario {
   agradecimientos            AgradecimientoRescatista[]
   comentariosAvistamiento    ComentarioAvistamiento[]
   lecturasComentarios        LecturaComentario[]
+  avistamientosComoRescatista Avistamiento[]
+  chatsComoDueno              ConversacionPrivada[] @relation("ChatsDueno")
+  chatsComoRescatista         ConversacionPrivada[] @relation("ChatsRescatista")
+  mensajesChat                MensajeChat[]
 
   @@map("usuarios")
 }
@@ -142,6 +146,7 @@ model Mascota {
   escaneos            EscaneoQr[]
   reportesExtravio    ReporteExtravio[]
   avistamientos       Avistamiento[]
+  conversaciones      ConversacionPrivada[]
 
   @@map("mascotas")
 }
@@ -304,17 +309,20 @@ model ReporteExtravio {
 }
 
 model Avistamiento {
-  avistamientoId     String    @id @default(dbgenerated("uuid_generate_v4()")) @map("avistamiento_id") @db.Uuid
-  mascotaId          String?   @map("mascota_id") @db.Uuid
-  ubicacionGps       Unsupported("geometry(Point, 4326)") @map("ubicacion_gps")
-  mensajeRescatista  String?   @map("mensaje_rescatista")
-  fotoEvidenciaUrl   String?   @map("foto_evidencia_url")
-  fechaAvistamiento  DateTime? @default(now()) @map("fecha_avistamiento") @db.Timestamptz
+  avistamientoId      String    @id @default(dbgenerated("uuid_generate_v4()")) @map("avistamiento_id") @db.Uuid
+  mascotaId           String?   @map("mascota_id") @db.Uuid
+  rescatistaUsuarioId String?   @map("rescatista_usuario_id") @db.Uuid
+  ubicacionGps        Unsupported("geometry(Point, 4326)") @map("ubicacion_gps")
+  mensajeRescatista   String?   @map("mensaje_rescatista")
+  fotoEvidenciaUrl    String?   @map("foto_evidencia_url")
+  fechaAvistamiento   DateTime? @default(now()) @map("fecha_avistamiento") @db.Timestamptz
 
-  mascota         Mascota? @relation(fields: [mascotaId], references: [mascotaId], onDelete: Cascade)
+  mascota         Mascota?  @relation(fields: [mascotaId], references: [mascotaId], onDelete: Cascade)
+  rescatista      Usuario?  @relation(fields: [rescatistaUsuarioId], references: [usuarioId], onDelete: SetNull)
   agradecimientos AgradecimientoRescatista[]
   comentarios     ComentarioAvistamiento[]
   lecturas        LecturaComentario[]
+  conversaciones  ConversacionPrivada[]
 
   @@map("avistamientos")
 }
@@ -358,4 +366,45 @@ model LecturaComentario {
 
   @@id([usuarioId, avistamientoId])
   @@map("lecturas_comentarios")
+}
+
+// =============================================================================
+// MÓDULO 5: CHAT PRIVADO ENTRE DUEÑO Y RESCATISTA
+// =============================================================================
+
+model ConversacionPrivada {
+  conversacionId       String    @id @default(dbgenerated("uuid_generate_v4()")) @map("conversacion_id") @db.Uuid
+  mascotaId            String    @map("mascota_id") @db.Uuid
+  avistamientoOrigenId String?   @map("avistamiento_origen_id") @db.Uuid
+  duenoUsuarioId       String    @map("dueno_usuario_id") @db.Uuid
+  rescatistaUsuarioId  String    @map("rescatista_usuario_id") @db.Uuid
+  estado               String    @default("pendiente")
+  intentos             Int       @default(1)
+  maxIntentos          Int       @default(2) @map("max_intentos")
+  creadoEl             DateTime? @default(now()) @map("creado_el") @db.Timestamptz
+
+  mascota             Mascota      @relation(fields: [mascotaId], references: [mascotaId], onDelete: Cascade)
+  avistamientoOrigen  Avistamiento? @relation(fields: [avistamientoOrigenId], references: [avistamientoId], onDelete: SetNull)
+  dueno               Usuario      @relation("ChatsDueno", fields: [duenoUsuarioId], references: [usuarioId], onDelete: Cascade)
+  rescatista          Usuario      @relation("ChatsRescatista", fields: [rescatistaUsuarioId], references: [usuarioId], onDelete: Cascade)
+  mensajes            MensajeChat[]
+
+  @@unique([mascotaId, duenoUsuarioId, rescatistaUsuarioId])
+  @@map("conversaciones_privadas")
+}
+
+model MensajeChat {
+  mensajeId      String    @id @default(dbgenerated("uuid_generate_v4()")) @map("mensaje_id") @db.Uuid
+  conversacionId String    @map("conversacion_id") @db.Uuid
+  autorUsuarioId String?   @map("autor_usuario_id") @db.Uuid
+  contenido      String?
+  fotoUrl        String?   @map("foto_url")
+  ubicacionGps   Unsupported("geometry(Point, 4326)")? @map("ubicacion_gps")
+  creadoEl       DateTime? @default(now()) @map("creado_el") @db.Timestamptz
+  leidoEl        DateTime? @map("leido_el") @db.Timestamptz
+
+  conversacion ConversacionPrivada @relation(fields: [conversacionId], references: [conversacionId], onDelete: Cascade)
+  autor        Usuario?            @relation(fields: [autorUsuarioId], references: [usuarioId], onDelete: SetNull)
+
+  @@map("mensajes_chat")
 }

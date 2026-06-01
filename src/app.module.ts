@@ -18,6 +18,7 @@ import { TiposMascotaModule } from './modules/tipos-mascota/tipos-mascota.module
 import { MapModule } from './modules/map/map.module';
 import { QrModule } from './modules/qr/qr.module';
 import { SightingsModule } from './modules/sightings/sightings.module';
+import { ChatsModule } from './modules/chats/chats.module';
 
 @Module({
   imports: [
@@ -48,6 +49,7 @@ import { SightingsModule } from './modules/sightings/sightings.module';
     MapModule,
     QrModule,
     SightingsModule,
+    ChatsModule,
   ],
   controllers: [AppController],
   providers: [

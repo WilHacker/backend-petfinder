@@ -47,7 +47,12 @@ export class SightingsService {
     private readonly realtime: RealtimeService,
   ) {}
 
-  async createSighting(mascotaId: string, dto: CreateSightingDto, file?: Express.Multer.File) {
+  async createSighting(
+    mascotaId: string,
+    dto: CreateSightingDto,
+    file?: Express.Multer.File,
+    rescatistaUsuarioId?: string,
+  ) {
     const mascota = await this.prisma.mascota.findUnique({ where: { mascotaId } });
     if (!mascota) throw new NotFoundException('Mascota no encontrada');
 
@@ -57,10 +62,15 @@ export class SightingsService {
       fotoUrl = result.secure_url;
     }
 
+    const rescatistaIdSql = rescatistaUsuarioId
+      ? Prisma.sql`${rescatistaUsuarioId}::uuid`
+      : Prisma.sql`NULL`;
+
     const [row] = await this.prisma.$queryRaw<Array<{ avistamiento_id: string }>>`
-      INSERT INTO avistamientos (mascota_id, ubicacion_gps, mensaje_rescatista, foto_evidencia_url)
+      INSERT INTO avistamientos (mascota_id, rescatista_usuario_id, ubicacion_gps, mensaje_rescatista, foto_evidencia_url)
       VALUES (
         ${mascotaId}::uuid,
+        ${rescatistaIdSql},
         ST_SetSRID(ST_MakePoint(${dto.lng}, ${dto.lat}), 4326),
         ${dto.mensajeRescatista ?? null},
         ${fotoUrl}

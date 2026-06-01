@@ -246,4 +246,75 @@ export class RealtimeService {
     this.server.emit('map:lost-pet-removed', { mascotaId });
     this.logger.debug(`[WS] map:lost-pet-removed → broadcast (mascota ${mascotaId})`);
   }
+
+  joinChatRoom(usuarioId: string, conversacionId: string): void {
+    if (!this.server) return;
+    const room = `chat:${conversacionId}`;
+    this.server.in(`user:${usuarioId}`).socketsJoin(room);
+    this.logger.debug(`[WS] socketsJoin chat:${conversacionId} ← user:${usuarioId}`);
+  }
+
+  emitChatInvite(
+    rescatistaUsuarioId: string,
+    payload: {
+      conversacionId: string;
+      mascota: { mascotaId: string; nombre: string; fotoUrl: string | null };
+      dueno: { nombre: string; apellido: string; fotoUrl: string | null };
+      intentosRestantes: number;
+    },
+  ): void {
+    if (!this.server) return;
+    this.server.to(`user:${rescatistaUsuarioId}`).emit('chat:invite', payload);
+    this.logger.debug(`[WS] chat:invite → user:${rescatistaUsuarioId}`);
+  }
+
+  emitChatAccepted(
+    duenoUsuarioId: string,
+    payload: {
+      conversacionId: string;
+      rescatista: { nombre: string; apellido: string; fotoUrl: string | null };
+    },
+  ): void {
+    if (!this.server) return;
+    this.server.to(`user:${duenoUsuarioId}`).emit('chat:accepted', payload);
+    this.logger.debug(`[WS] chat:accepted → user:${duenoUsuarioId}`);
+  }
+
+  emitChatDeclined(
+    duenoUsuarioId: string,
+    payload: { conversacionId: string; intentosRestantes: number },
+  ): void {
+    if (!this.server) return;
+    this.server.to(`user:${duenoUsuarioId}`).emit('chat:declined', payload);
+    this.logger.debug(`[WS] chat:declined → user:${duenoUsuarioId}`);
+  }
+
+  emitChatMessage(
+    conversacionId: string,
+    payload: {
+      mensajeId: string;
+      conversacionId: string;
+      autorUsuarioId: string;
+      autorNombre: string;
+      autorFotoUrl: string | null;
+      contenido: string | null;
+      fotoUrl: string | null;
+      lat: number | null;
+      lng: number | null;
+      creadoEl: Date;
+    },
+  ): void {
+    if (!this.server) return;
+    this.server.to(`chat:${conversacionId}`).emit('chat:message', payload);
+    this.logger.debug(`[WS] chat:message → chat:${conversacionId}`);
+  }
+
+  emitChatUnreadCount(
+    conversacionId: string,
+    payload: { conversacionId: string; noLeidos: number },
+  ): void {
+    if (!this.server) return;
+    this.server.to(`chat:${conversacionId}`).emit('chat:unread-count', payload);
+    this.logger.debug(`[WS] chat:unread-count → chat:${conversacionId} (${payload.noLeidos})`);
+  }
 }

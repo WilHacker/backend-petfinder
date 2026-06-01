@@ -17,6 +17,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Public } from '../../common/decorators/public.decorator';
 import { SightingsService } from './sightings.service';
+import { ChatsService } from '../chats/chats.service';
 import { CreateSightingDto } from './dto/create-sighting.dto';
 import { CreateThanksDto } from './dto/create-thanks.dto';
 import { CreateCommentDto } from './dto/create-comment.dto';
@@ -26,7 +27,10 @@ import { CreateCommentDto } from './dto/create-comment.dto';
 @UseGuards(JwtAuthGuard)
 @Controller('sightings')
 export class SightingsController {
-  constructor(private readonly sightingsService: SightingsService) {}
+  constructor(
+    private readonly sightingsService: SightingsService,
+    private readonly chatsService: ChatsService,
+  ) {}
 
   @Post('pets/:petId')
   @Public()
@@ -55,8 +59,9 @@ export class SightingsController {
     @Param('petId', ParseUUIDPipe) mascotaId: string,
     @Body() dto: CreateSightingDto,
     @UploadedFile() file?: Express.Multer.File,
+    @CurrentUser('sub') usuarioId?: string,
   ) {
-    return this.sightingsService.createSighting(mascotaId, dto, file);
+    return this.sightingsService.createSighting(mascotaId, dto, file, usuarioId);
   }
 
   @Get('pets/:petId')
@@ -196,5 +201,20 @@ export class SightingsController {
     @CurrentUser('sub') usuarioId: string,
   ) {
     return this.sightingsService.getComments(avistamientoId, usuarioId);
+  }
+
+  @Post(':id/chat')
+  @ApiOperation({
+    summary: 'Iniciar chat privado con el rescatista del avistamiento',
+    description:
+      'Solo el dueño puede iniciar el chat. El rescatista debe haber creado el avistamiento ' +
+      'con sesión iniciada. Se envía una invitación al rescatista via WebSocket (chat:invite). ' +
+      'Máximo 2 intentos por par mascota+rescatista.',
+  })
+  initChat(
+    @Param('id', ParseUUIDPipe) avistamientoId: string,
+    @CurrentUser('sub') usuarioId: string,
+  ) {
+    return this.chatsService.initChat(avistamientoId, usuarioId);
   }
 }

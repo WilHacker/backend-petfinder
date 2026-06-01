@@ -59,10 +59,23 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
       const petRooms = relaciones.map((r) => `pet:${r.mascotaId}`);
       if (petRooms.length > 0) await client.join(petRooms);
 
-      // Room personal para mensajes directos futuros
+      // Room personal para invitaciones y mensajes directos
       await client.join(`user:${payload.sub}`);
 
-      this.logger.log(`[WS] Conectado: ${payload.sub} | rooms: ${petRooms.length} mascotas`);
+      // Unirse a los rooms de chats privados aceptados
+      const chats = await this.prisma.conversacionPrivada.findMany({
+        where: {
+          estado: 'aceptada',
+          OR: [{ duenoUsuarioId: payload.sub }, { rescatistaUsuarioId: payload.sub }],
+        },
+        select: { conversacionId: true },
+      });
+      const chatRooms = chats.map((c) => `chat:${c.conversacionId}`);
+      if (chatRooms.length > 0) await client.join(chatRooms);
+
+      this.logger.log(
+        `[WS] Conectado: ${payload.sub} | mascotas: ${petRooms.length} | chats: ${chatRooms.length}`,
+      );
     } catch {
       this.logger.warn(`[WS] Conexión rechazada — token inválido`);
       client.disconnect(true);

@@ -2,6 +2,7 @@ import { JwtService } from '@nestjs/jwt';
 import { Test, TestingModule } from '@nestjs/testing';
 import { SightingsController } from './sightings.controller';
 import { SightingsService } from './sightings.service';
+import { ChatsService } from '../chats/chats.service';
 import { CreateSightingDto } from './dto/create-sighting.dto';
 import { CreateThanksDto } from './dto/create-thanks.dto';
 
@@ -17,6 +18,8 @@ const mockSightingsService = {
   getThanks: jest.fn(),
 };
 
+const mockChatsService = { initChat: jest.fn() };
+
 const mockJwtService = { verifyAsync: jest.fn() };
 
 describe('SightingsController', () => {
@@ -29,6 +32,7 @@ describe('SightingsController', () => {
       controllers: [SightingsController],
       providers: [
         { provide: SightingsService, useValue: mockSightingsService },
+        { provide: ChatsService, useValue: mockChatsService },
         { provide: JwtService, useValue: mockJwtService },
       ],
     }).compile();
@@ -47,9 +51,14 @@ describe('SightingsController', () => {
       const dto: CreateSightingDto = { lat: -17.78, lng: -63.18 };
       mockSightingsService.createSighting.mockResolvedValue({ avistamientoId: AVISTAMIENTO_ID });
 
-      await controller.createSighting(MASCOTA_ID, dto, undefined);
+      await controller.createSighting(MASCOTA_ID, dto, undefined, undefined);
 
-      expect(mockSightingsService.createSighting).toHaveBeenCalledWith(MASCOTA_ID, dto, undefined);
+      expect(mockSightingsService.createSighting).toHaveBeenCalledWith(
+        MASCOTA_ID,
+        dto,
+        undefined,
+        undefined,
+      );
     });
 
     it('delega al service con archivo cuando se envía foto', async () => {
@@ -57,9 +66,28 @@ describe('SightingsController', () => {
       const file = { buffer: Buffer.from('img'), mimetype: 'image/jpeg' } as Express.Multer.File;
       mockSightingsService.createSighting.mockResolvedValue({ avistamientoId: AVISTAMIENTO_ID });
 
-      await controller.createSighting(MASCOTA_ID, dto, file);
+      await controller.createSighting(MASCOTA_ID, dto, file, undefined);
 
-      expect(mockSightingsService.createSighting).toHaveBeenCalledWith(MASCOTA_ID, dto, file);
+      expect(mockSightingsService.createSighting).toHaveBeenCalledWith(
+        MASCOTA_ID,
+        dto,
+        file,
+        undefined,
+      );
+    });
+
+    it('delega rescatistaUsuarioId al service cuando hay JWT', async () => {
+      const dto: CreateSightingDto = { lat: -17.78, lng: -63.18 };
+      mockSightingsService.createSighting.mockResolvedValue({ avistamientoId: AVISTAMIENTO_ID });
+
+      await controller.createSighting(MASCOTA_ID, dto, undefined, USUARIO_ID);
+
+      expect(mockSightingsService.createSighting).toHaveBeenCalledWith(
+        MASCOTA_ID,
+        dto,
+        undefined,
+        USUARIO_ID,
+      );
     });
 
     it('retorna el resultado del service', async () => {
@@ -69,6 +97,7 @@ describe('SightingsController', () => {
       const result = await controller.createSighting(
         MASCOTA_ID,
         { lat: -17.78, lng: -63.18 },
+        undefined,
         undefined,
       );
 
